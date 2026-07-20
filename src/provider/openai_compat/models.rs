@@ -5,6 +5,7 @@
 //! "provider::openai_compat：OpenAI 兼容实现" 一节，以及
 //! `Provider::known_models` 的默认实现（Requirement 8.1）。
 
+use crate::provider::ProviderName;
 use crate::provider::model::{ModelCapabilities, ModelInfo, Pricing};
 
 /// DeepSeek 服务商的已知模型：`deepseek-v4-flash`（轻量、低延迟）与
@@ -13,7 +14,7 @@ pub fn deepseek_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
             id: "deepseek-v4-flash".to_string(),
-            provider: "deepseek".to_string(),
+            provider: ProviderName::DeepSeek,
             context_window: 128_000,
             max_output_tokens: 8_192,
             capabilities: ModelCapabilities {
@@ -32,7 +33,7 @@ pub fn deepseek_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             id: "deepseek-v4-pro".to_string(),
-            provider: "deepseek".to_string(),
+            provider: ProviderName::DeepSeek,
             context_window: 256_000,
             max_output_tokens: 8_192,
             capabilities: ModelCapabilities {
@@ -58,7 +59,7 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
             id: "kimi-k3".to_string(),
-            provider: "moonshot".to_string(),
+            provider: ProviderName::Moonshot,
             context_window: 256_000,
             max_output_tokens: 8_192,
             capabilities: ModelCapabilities {
@@ -77,7 +78,7 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             id: "kimi-k2.7".to_string(),
-            provider: "moonshot".to_string(),
+            provider: ProviderName::Moonshot,
             context_window: 128_000,
             max_output_tokens: 8_192,
             capabilities: ModelCapabilities {
@@ -96,7 +97,7 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             id: "kimi-k2.6".to_string(),
-            provider: "moonshot".to_string(),
+            provider: ProviderName::Moonshot,
             context_window: 128_000,
             max_output_tokens: 4_096,
             capabilities: ModelCapabilities {
@@ -122,7 +123,7 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
             id: "glm-5.2".to_string(),
-            provider: "zhipu".to_string(),
+            provider: ProviderName::Zhipu,
             context_window: 200_000,
             max_output_tokens: 16_384,
             capabilities: ModelCapabilities {
@@ -141,7 +142,7 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             id: "glm-5.1".to_string(),
-            provider: "zhipu".to_string(),
+            provider: ProviderName::Zhipu,
             context_window: 128_000,
             max_output_tokens: 8_192,
             capabilities: ModelCapabilities {
@@ -160,7 +161,7 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
         },
         ModelInfo {
             id: "glm-5.0".to_string(),
-            provider: "zhipu".to_string(),
+            provider: ProviderName::Zhipu,
             context_window: 128_000,
             max_output_tokens: 4_096,
             capabilities: ModelCapabilities {
@@ -168,6 +169,25 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: false,
+                supports_parallel_tool_calls: false,
+                supports_system_prompt: true,
+                max_concurrent_tools: Some(32),
+            },
+            pricing: Some(Pricing {
+                input_per_million: 0.2,
+                output_per_million: 0.8,
+            }),
+        },
+        ModelInfo {
+            id: "glm-4.7-flash".to_string(),
+            provider: ProviderName::Zhipu,
+            context_window: 128_000,
+            max_output_tokens: 4_096,
+            capabilities: ModelCapabilities {
+                supports_vision: false,
+                supports_tools: true,
+                supports_streaming: true,
+                supports_json_mode: true,
                 supports_parallel_tool_calls: false,
                 supports_system_prompt: true,
                 max_concurrent_tools: Some(32),
@@ -205,11 +225,11 @@ mod tests {
         }
     }
 
-    fn assert_provider(models: &[ModelInfo], expected: &str) {
+    fn assert_provider(models: &[ModelInfo], expected: &ProviderName) {
         for model in models {
             assert_eq!(
-                model.provider, expected,
-                "model {} has unexpected provider {}",
+                model.provider, *expected,
+                "model {} has unexpected provider {:?}",
                 model.id, model.provider
             );
         }
@@ -219,21 +239,21 @@ mod tests {
     fn deepseek_models_have_unique_ids_and_provider() {
         let models = deepseek_models();
         assert_unique_ids(&models);
-        assert_provider(&models, "deepseek");
+        assert_provider(&models, &ProviderName::DeepSeek);
     }
 
     #[test]
     fn moonshot_models_have_unique_ids_and_provider() {
         let models = moonshot_models();
         assert_unique_ids(&models);
-        assert_provider(&models, "moonshot");
+        assert_provider(&models, &ProviderName::Moonshot);
     }
 
     #[test]
     fn zhipu_models_have_unique_ids_and_provider() {
         let models = zhipu_models();
         assert_unique_ids(&models);
-        assert_provider(&models, "zhipu");
+        assert_provider(&models, &ProviderName::Zhipu);
     }
 
     #[test]

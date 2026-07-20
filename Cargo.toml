@@ -10,11 +10,10 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
-thiserror = "1"
+thiserror = "2"
 secrecy = "0.10"
 async-stream = "0.3"
 eventsource-stream = "=0.2.3"
-tracing = "0.1"
 
 [dev-dependencies]
 anyhow = "1"

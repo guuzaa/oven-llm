@@ -44,6 +44,19 @@ pub trait Provider: Send + Sync {
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         Ok(vec![])
     }
+
+    fn provider_name(&self) -> ProviderName;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProviderName {
+    OpenAI,
+    DeepSeek,
+    Moonshot,
+    Zhipu,
+    Anthropic,
+    Grok,
+    Custom(String),
 }
 
 #[cfg(test)]
@@ -69,6 +82,10 @@ mod tests {
             _req: &Request,
         ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
             unimplemented!("not needed for this test")
+        }
+
+        fn provider_name(&self) -> ProviderName {
+            ProviderName::Custom("Stub".into())
         }
     }
 

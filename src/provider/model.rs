@@ -3,11 +3,13 @@
 //! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
 //! "模型能力层" 一节。
 
+use crate::ProviderName;
+
 /// 描述单个模型的元数据（所属 provider、上下文窗口、最大输出 token、能力集合、定价）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
     pub id: String,
-    pub provider: String,
+    pub provider: ProviderName,
     pub context_window: u32,
     pub max_output_tokens: u32,
     pub capabilities: ModelCapabilities,
@@ -18,10 +20,10 @@ impl ModelInfo {
     /// 构造一个仅包含 `id`/`provider` 的最小 `ModelInfo`，其余字段填充为
     /// 零值/默认值。用于 `Provider::list_models` 等无法获得完整能力信息的场景
     /// （Requirement 8.1）。
-    pub fn minimal(id: impl Into<String>, provider: impl Into<String>) -> Self {
+    pub fn minimal(id: impl Into<String>, provider: ProviderName) -> Self {
         Self {
             id: id.into(),
-            provider: provider.into(),
+            provider: provider,
             context_window: 0,
             max_output_tokens: 0,
             capabilities: ModelCapabilities::default(),
@@ -55,9 +57,9 @@ mod tests {
 
     #[test]
     fn minimal_fills_zero_defaults() {
-        let info = ModelInfo::minimal("gpt-4", "openai");
+        let info = ModelInfo::minimal("gpt-4", ProviderName::OpenAI);
         assert_eq!(info.id, "gpt-4");
-        assert_eq!(info.provider, "openai");
+        assert_eq!(info.provider, ProviderName::OpenAI);
         assert_eq!(info.context_window, 0);
         assert_eq!(info.max_output_tokens, 0);
         assert_eq!(info.capabilities, ModelCapabilities::default());

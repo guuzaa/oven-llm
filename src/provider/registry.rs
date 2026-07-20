@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::ModelId;
+use crate::{ProviderName, domain::ModelId};
 
 use super::model::ModelInfo;
 
@@ -49,10 +49,10 @@ impl ModelRegistry {
 
     /// 返回 `provider` 字段与查询参数精确匹配的所有 `ModelInfo`
     /// （Requirement 8.3）。
-    pub fn list_by_provider(&self, provider: &str) -> Vec<&ModelInfo> {
+    pub fn list_by_provider(&self, provider: &ProviderName) -> Vec<&ModelInfo> {
         self.models
             .values()
-            .filter(|info| info.provider == provider)
+            .filter(|info| info.provider == *provider)
             .collect()
     }
 
@@ -75,10 +75,10 @@ mod tests {
     use super::*;
     use crate::provider::model::ModelCapabilities;
 
-    fn model(id: &str, provider: &str) -> ModelInfo {
+    fn model(id: &str, provider: ProviderName) -> ModelInfo {
         ModelInfo {
             id: id.to_string(),
-            provider: provider.to_string(),
+            provider: provider,
             context_window: 1000,
             max_output_tokens: 100,
             capabilities: ModelCapabilities::default(),
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn register_then_get_roundtrip() {
         let mut registry = ModelRegistry::new();
-        let info = model("deepseek-chat", "deepseek");
+        let info = model("deepseek-chat", ProviderName::DeepSeek);
         registry.register(info.clone());
 
         assert_eq!(registry.get("deepseek-chat"), Some(&info));
@@ -98,9 +98,9 @@ mod tests {
     #[test]
     fn register_overrides_existing_id() {
         let mut registry = ModelRegistry::new();
-        registry.register(model("deepseek-chat", "deepseek"));
+        registry.register(model("deepseek-chat", ProviderName::DeepSeek));
 
-        let mut updated = model("deepseek-chat", "deepseek");
+        let mut updated = model("deepseek-chat", ProviderName::DeepSeek);
         updated.context_window = 999_999;
         registry.register(updated.clone());
 
@@ -112,29 +112,29 @@ mod tests {
     fn list_by_provider_filters_exact_matches() {
         let mut registry = ModelRegistry::new();
         registry.register_all([
-            model("deepseek-chat", "deepseek"),
-            model("deepseek-coder", "deepseek"),
-            model("glm-4", "zhipu"),
+            model("deepseek-chat", ProviderName::DeepSeek),
+            model("deepseek-coder", ProviderName::DeepSeek),
+            model("glm-4", ProviderName::Zhipu),
         ]);
 
         let mut deepseek_ids: Vec<&str> = registry
-            .list_by_provider("deepseek")
+            .list_by_provider(&ProviderName::DeepSeek)
             .into_iter()
             .map(|info| info.id.as_str())
             .collect();
         deepseek_ids.sort();
 
         assert_eq!(deepseek_ids, vec!["deepseek-chat", "deepseek-coder"]);
-        assert!(registry.list_by_provider("openai").is_empty());
+        assert!(registry.list_by_provider(&ProviderName::OpenAI).is_empty());
     }
 
     #[test]
     fn search_matches_prefix_only() {
         let mut registry = ModelRegistry::new();
         registry.register_all([
-            model("moonshot-v1-8k", "moonshot"),
-            model("moonshot-v1-32k", "moonshot"),
-            model("glm-4", "zhipu"),
+            model("moonshot-v1-8k", ProviderName::Moonshot),
+            model("moonshot-v1-32k", ProviderName::Moonshot),
+            model("glm-4", ProviderName::Zhipu),
         ]);
 
         let mut matches: Vec<&str> = registry

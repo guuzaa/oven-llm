@@ -12,6 +12,12 @@ use super::message::{ContentBlock, Role};
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_read_tokens: u32,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 /// 响应终止原因，与具体 provider 无关。
@@ -48,6 +54,7 @@ mod tests {
         let usage = Usage::default();
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 0);
     }
 
     #[test]
@@ -55,10 +62,23 @@ mod tests {
         let usage = Usage {
             input_tokens: 10,
             output_tokens: 20,
+            cache_read_tokens: 0,
         };
         let json = serde_json::to_value(usage).unwrap();
         assert_eq!(json["input_tokens"], 10);
         assert_eq!(json["output_tokens"], 20);
+        assert!(json.get("cache_read_tokens").is_none());
+    }
+
+    #[test]
+    fn usage_serializes_cache_read_tokens_when_nonzero() {
+        let usage = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 5,
+        };
+        let json = serde_json::to_value(usage).unwrap();
+        assert_eq!(json["cache_read_tokens"], 5);
     }
 
     #[test]
@@ -106,6 +126,7 @@ mod tests {
             usage: Some(Usage {
                 input_tokens: 5,
                 output_tokens: 7,
+                cache_read_tokens: 0,
             }),
         };
         let json = serde_json::to_value(&response).unwrap();
@@ -144,6 +165,7 @@ mod tests {
             usage: Some(Usage {
                 input_tokens: 1,
                 output_tokens: 2,
+                cache_read_tokens: 0,
             }),
         };
         let json = serde_json::to_string(&response).unwrap();

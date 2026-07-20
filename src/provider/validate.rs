@@ -176,7 +176,7 @@ mod tests {
     fn full_capability_model() -> ModelInfo {
         ModelInfo {
             id: "test-model".to_string(),
-            provider: "test".to_string(),
+            provider: crate::ProviderName::Custom("test".to_string()),
             context_window: 100_000,
             max_output_tokens: 4096,
             capabilities: ModelCapabilities {

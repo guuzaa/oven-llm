@@ -157,12 +157,47 @@ pub(crate) struct WireResponseToolCallFunction {
     pub arguments: String,
 }
 
-/// token 用量统计（Requirements 4.6）。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// token 用量统计（Requirement 4.6）。
+///
+/// `prompt_tokens` / `completion_tokens` / `total_tokens` 是 OpenAI 标准
+/// 字段，所有兼容 provider 都会返回。其余字段均为各家扩展、用于统计 KV
+/// cache 命中数：
+/// - `prompt_tokens_details.cached_tokens`：OpenAI / zhipu / deepseek /
+///   kimi 均提供，是最稳定的统一来源；
+/// - `cached_tokens`（顶层）：kimi 额外冗余提供；
+/// - `prompt_cache_hit_tokens`：deepseek 额外冗余提供。
+///
+/// decoder 按 `prompt_tokens_details.cached_tokens` → `cached_tokens` →
+/// `prompt_cache_hit_tokens` 的优先级取首个非零值填入 `Usage.cache_read_tokens`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub(crate) struct WireUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<WireTokenDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens_details: Option<WireTokenDetails>,
+    /// kimi 顶层冗余字段，等价于 `prompt_tokens_details.cached_tokens`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u32>,
+    /// deepseek 冗余字段，等价于 `prompt_tokens_details.cached_tokens`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_tokens: Option<u32>,
+    /// deepseek 冗余字段：未命中 KV cache 的 prompt token 数。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<u32>,
+}
+
+/// `*_tokens_details` 子结构：`cached_tokens` 出现在 `prompt_tokens_details`
+/// 表示命中 KV cache 的输入 token 数；出现在 `completion_tokens_details`
+/// 表示推理 token 数（reasoning_tokens）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) struct WireTokenDetails {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

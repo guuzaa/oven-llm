@@ -124,6 +124,7 @@ mod tests {
             usage: Some(Usage {
                 input_tokens: 3,
                 output_tokens: 4,
+                cache_read_tokens: 0,
             }),
         };
         let json = serde_json::to_value(&event).unwrap();

@@ -24,27 +24,7 @@ use oven_llm::{
 };
 use secrecy::SecretString;
 
-#[tokio::main]
-async fn main() {
-    // 1. 创建 DeepSeek provider（从环境变量读取 API key，未设置时使用占位值）。
-    let api_key =
-        std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = OpenAICompatProvider::deepseek(SecretString::new(api_key.into()));
-
-    // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
-    let model_id = ModelId::from("deepseek-v4-flash");
-    let request = Request {
-        model: model_id,
-        messages: vec![Message::user(vec![ContentBlock::text(
-            "用一句话介绍一下 Rust 语言。",
-        )])],
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
+async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
     // 3. 演示 list_models（可能因缺少真实 API key/网络而失败，打印错误后继续）。
     match provider.list_models().await {
         Ok(models) => {
@@ -57,7 +37,7 @@ async fn main() {
     }
 
     // 4. 演示非流式 complete 调用。
-    match provider.complete(&request).await {
+    match provider.complete(request).await {
         Ok(response) => {
             println!(
                 "complete() succeeded: id={} stop_reason={:?}",
@@ -73,7 +53,7 @@ async fn main() {
     }
 
     // 5. 演示流式 stream 调用，逐块打印 Delta::TextDelta 内容。
-    match provider.stream(&request).await {
+    match provider.stream(request).await {
         Ok(mut event_stream) => {
             print!("stream() text: ");
             use futures::StreamExt;
@@ -97,4 +77,30 @@ async fn main() {
         }
         Err(err) => eprintln!("stream() failed to start (expected without a real API key): {err}"),
     }
+}
+
+#[tokio::main]
+async fn main() {
+    // 1. 创建 DeepSeek provider（从环境变量读取 API key，未设置时使用占位值）。
+    let api_key =
+        std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
+    let provider = Box::new(OpenAICompatProvider::deepseek(SecretString::new(
+        api_key.into(),
+    )));
+
+    // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
+    let model_id = ModelId::from("deepseek-v4-flash");
+    let request = Request {
+        model: model_id,
+        messages: vec![Message::user(vec![ContentBlock::text(
+            "用一句话介绍一下 Rust 语言。",
+        )])],
+        sampling: SamplingParams {
+            temperature: Some(0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    provider_example(provider, &request).await
 }

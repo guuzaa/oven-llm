@@ -27,6 +27,7 @@ use super::decoder::{self, StreamDecoder};
 use super::encoder;
 use super::models::{deepseek_models, moonshot_models, zhipu_models};
 use super::types::{ChatCompletionChunk, ChatCompletionResponse};
+use crate::ProviderName;
 use crate::domain::{ModelId, Request, Response, StreamEvent};
 use crate::provider::model::ModelInfo;
 use crate::provider::validate::validate_request;
@@ -39,7 +40,7 @@ use crate::provider::{Provider, ProviderError};
 /// 完全共享。
 pub struct OpenAICompatProvider {
     base_url: String,
-    provider_name: String,
+    provider_name: ProviderName,
     api_key: SecretString,
     extra_headers: HeaderMap,
     model_catalog: HashMap<ModelId, ModelInfo>,
@@ -50,7 +51,7 @@ impl OpenAICompatProvider {
     /// 构造一个不带静态模型元数据、不带额外请求头的 provider。
     pub fn new(
         base_url: impl Into<String>,
-        provider_name: impl Into<String>,
+        provider_name: ProviderName,
         api_key: SecretString,
     ) -> Self {
         Self::with_models(
@@ -65,7 +66,7 @@ impl OpenAICompatProvider {
     /// 构造一个带静态模型元数据与额外请求头的 provider。
     pub fn with_models(
         base_url: impl Into<String>,
-        provider_name: impl Into<String>,
+        provider_name: ProviderName,
         api_key: SecretString,
         known_models: Vec<ModelInfo>,
         extra_headers: HeaderMap,
@@ -77,7 +78,7 @@ impl OpenAICompatProvider {
 
         Self {
             base_url: base_url.into(),
-            provider_name: provider_name.into(),
+            provider_name: provider_name,
             api_key,
             extra_headers,
             model_catalog,
@@ -89,7 +90,7 @@ impl OpenAICompatProvider {
     pub fn deepseek(api_key: SecretString) -> Self {
         Self::with_models(
             "https://api.deepseek.com",
-            "deepseek",
+            ProviderName::DeepSeek,
             api_key,
             deepseek_models(),
             HeaderMap::new(),
@@ -100,7 +101,7 @@ impl OpenAICompatProvider {
     pub fn moonshot(api_key: SecretString) -> Self {
         Self::with_models(
             "https://api.moonshot.cn/v1",
-            "moonshot",
+            ProviderName::Moonshot,
             api_key,
             moonshot_models(),
             HeaderMap::new(),
@@ -111,7 +112,7 @@ impl OpenAICompatProvider {
     pub fn zhipu(api_key: SecretString) -> Self {
         Self::with_models(
             "https://open.bigmodel.cn/api/paas/v4",
-            "zhipu",
+            ProviderName::Zhipu,
             api_key,
             zhipu_models(),
             HeaderMap::new(),
@@ -126,7 +127,7 @@ impl OpenAICompatProvider {
     pub fn openai(api_key: SecretString) -> Self {
         Self::with_models(
             "https://api.openai.com/v1",
-            "openai",
+            ProviderName::OpenAI,
             api_key,
             Vec::new(),
             HeaderMap::new(),
@@ -337,6 +338,10 @@ impl Provider for OpenAICompatProvider {
         self.model_catalog.get(id)
     }
 
+    fn provider_name(&self) -> ProviderName {
+        self.provider_name.clone()
+    }
+
     /// GET `{base_url}/models`，仅填充 `id` 与 `provider` 字段
     /// （Requirement 6.6）。
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
@@ -399,9 +404,16 @@ mod tests {
 
     #[test]
     fn new_sets_base_url_and_provider_name() {
-        let provider = OpenAICompatProvider::new("https://example.com", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         assert_eq!(provider.base_url, "https://example.com");
-        assert_eq!(provider.provider_name, "example");
+        assert_eq!(
+            provider.provider_name,
+            ProviderName::Custom("example".into())
+        );
         assert!(provider.known_models().is_empty());
     }
 
@@ -409,7 +421,7 @@ mod tests {
     fn deepseek_preset_has_correct_base_url_and_models() {
         let provider = OpenAICompatProvider::deepseek(api_key("k"));
         assert_eq!(provider.base_url, "https://api.deepseek.com");
-        assert_eq!(provider.provider_name, "deepseek");
+        assert_eq!(provider.provider_name, ProviderName::DeepSeek);
         assert_eq!(provider.known_models().len(), deepseek_models().len());
     }
 
@@ -417,7 +429,7 @@ mod tests {
     fn moonshot_preset_has_correct_base_url_and_models() {
         let provider = OpenAICompatProvider::moonshot(api_key("k"));
         assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
-        assert_eq!(provider.provider_name, "moonshot");
+        assert_eq!(provider.provider_name, ProviderName::Moonshot);
         assert_eq!(provider.known_models().len(), moonshot_models().len());
     }
 
@@ -425,7 +437,7 @@ mod tests {
     fn zhipu_preset_has_correct_base_url_and_models() {
         let provider = OpenAICompatProvider::zhipu(api_key("k"));
         assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
-        assert_eq!(provider.provider_name, "zhipu");
+        assert_eq!(provider.provider_name, ProviderName::Zhipu);
         assert_eq!(provider.known_models().len(), zhipu_models().len());
     }
 
@@ -433,7 +445,7 @@ mod tests {
     fn openai_preset_has_correct_base_url_and_empty_models() {
         let provider = OpenAICompatProvider::openai(api_key("k"));
         assert_eq!(provider.base_url, "https://api.openai.com/v1");
-        assert_eq!(provider.provider_name, "openai");
+        assert_eq!(provider.provider_name, ProviderName::OpenAI);
         assert!(provider.known_models().is_empty());
     }
 
@@ -441,8 +453,11 @@ mod tests {
 
     #[test]
     fn build_headers_includes_authorization_and_content_type() {
-        let provider =
-            OpenAICompatProvider::new("https://example.com", "example", api_key("secret-token"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("secret-token"),
+        );
         let headers = provider.build_headers();
         assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Bearer secret-token");
         assert_eq!(headers.get(CONTENT_TYPE).unwrap(), "application/json");
@@ -457,7 +472,7 @@ mod tests {
         );
         let provider = OpenAICompatProvider::with_models(
             "https://example.com",
-            "example",
+            ProviderName::Custom("example".into()),
             api_key("k"),
             Vec::new(),
             extra,
@@ -470,7 +485,11 @@ mod tests {
 
     #[test]
     fn endpoint_joins_base_url_without_trailing_slash() {
-        let provider = OpenAICompatProvider::new("https://example.com", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         assert_eq!(
             provider.endpoint("chat/completions"),
             "https://example.com/chat/completions"
@@ -479,7 +498,11 @@ mod tests {
 
     #[test]
     fn endpoint_handles_trailing_and_leading_slashes() {
-        let provider = OpenAICompatProvider::new("https://example.com/", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com/",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         assert_eq!(
             provider.endpoint("/chat/completions"),
             "https://example.com/chat/completions"
@@ -490,7 +513,11 @@ mod tests {
 
     #[test]
     fn build_body_with_empty_provider_options_has_no_extra_fields() {
-        let provider = OpenAICompatProvider::new("https://example.com", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let req = sample_request();
         let body = provider.build_body(&req, false).unwrap();
         let object = body.as_object().unwrap();
@@ -500,7 +527,11 @@ mod tests {
 
     #[test]
     fn build_body_merges_provider_options() {
-        let provider = OpenAICompatProvider::new("https://example.com", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let mut req = sample_request();
         req.provider_options.insert("top_k".to_string(), json!(40));
         let body = provider.build_body(&req, false).unwrap();
@@ -509,7 +540,11 @@ mod tests {
 
     #[test]
     fn build_body_provider_options_override_standard_field() {
-        let provider = OpenAICompatProvider::new("https://example.com", "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            "https://example.com",
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let mut req = sample_request();
         req.sampling.temperature = Some(0.5);
         req.provider_options
@@ -529,7 +564,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let err = provider.complete(&sample_request()).await.unwrap_err();
         match err {
             ProviderError::Auth(body) => assert_eq!(body, "bad key"),
@@ -546,7 +585,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let err = provider.complete(&sample_request()).await.unwrap_err();
         assert!(matches!(err, ProviderError::Auth(_)));
     }
@@ -560,7 +603,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let err = provider.complete(&sample_request()).await.unwrap_err();
         match err {
             ProviderError::RateLimit { retry_after_ms } => assert_eq!(retry_after_ms, None),
@@ -577,7 +624,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let err = provider.complete(&sample_request()).await.unwrap_err();
         match err {
             ProviderError::Api { status, body } => {
@@ -608,7 +659,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let req = sample_request();
 
         let response = provider.complete(&req).await.unwrap();
@@ -627,7 +682,7 @@ mod tests {
         let models = deepseek_models();
         let provider = OpenAICompatProvider::with_models(
             "https://example.com",
-            "example",
+            ProviderName::DeepSeek,
             api_key("k"),
             models.clone(),
             HeaderMap::new(),
@@ -651,12 +706,19 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let models = provider.list_models().await.unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "gpt-4");
-        assert_eq!(models[0].provider, "example");
-        assert_eq!(models[0], ModelInfo::minimal("gpt-4", "example"));
+        assert_eq!(models[0].provider, ProviderName::Custom("example".into()));
+        assert_eq!(
+            models[0],
+            ModelInfo::minimal("gpt-4", ProviderName::Custom("example".into()))
+        );
         assert_eq!(models[1].id, "gpt-3.5-turbo");
     }
 
@@ -669,7 +731,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let err = provider.list_models().await.unwrap_err();
         assert!(matches!(err, ProviderError::Auth(_)));
     }
@@ -694,7 +760,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let req = sample_request();
 
         let mut event_stream = provider.stream(&req).await.unwrap();
@@ -727,7 +797,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let mut event_stream = provider.stream(&sample_request()).await.unwrap();
         let mut events = Vec::new();
         while let Some(event) = event_stream.next().await {
@@ -757,7 +831,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(mock_server.uri(), "example", api_key("k"));
+        let provider = OpenAICompatProvider::new(
+            mock_server.uri(),
+            ProviderName::Custom("example".into()),
+            api_key("k"),
+        );
         let result = provider.stream(&sample_request()).await;
         match result {
             Err(ProviderError::RateLimit { .. }) => {}

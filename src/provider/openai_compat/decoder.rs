@@ -144,9 +144,21 @@ fn decode_tool_call(tool_call: WireResponseToolCall) -> Result<ContentBlock, Dec
 
 /// 将 `WireUsage` 转换为 domain 层的 `Usage`。
 fn decode_usage(usage: WireUsage) -> Usage {
+    // 1. `prompt_tokens_details.cached_tokens`（OpenAI / zhipu / deepseek / kimi）
+    // 2. `cached_tokens`（kimi 顶层冗余字段）
+    // 3. `prompt_cache_hit_tokens`（deepseek 冗余字段）
+    let cache_read_tokens = usage
+        .prompt_tokens_details
+        .and_then(|d| d.cached_tokens)
+        .filter(|v| *v > 0)
+        .or_else(|| usage.cached_tokens.filter(|v| *v > 0))
+        .or_else(|| usage.prompt_cache_hit_tokens.filter(|v| *v > 0))
+        .unwrap_or(0);
+
     Usage {
         input_tokens: usage.prompt_tokens,
         output_tokens: usage.completion_tokens,
+        cache_read_tokens,
     }
 }
 
@@ -401,7 +413,7 @@ impl StreamDecoder {
 mod tests {
     use super::*;
     use crate::provider::openai_compat::types::{
-        WireChoice, WireResponseMessage, WireResponseToolCallFunction,
+        WireChoice, WireResponseMessage, WireResponseToolCallFunction, WireTokenDetails,
     };
 
     fn choice(message: WireResponseMessage, finish_reason: Option<&str>) -> WireChoice {
@@ -545,6 +557,7 @@ mod tests {
                 prompt_tokens: 10,
                 completion_tokens: 5,
                 total_tokens: 15,
+                ..Default::default()
             }),
         );
         let response = decode_response(wire).unwrap();
@@ -552,7 +565,127 @@ mod tests {
             response.usage,
             Some(Usage {
                 input_tokens: 10,
-                output_tokens: 5
+                output_tokens: 5,
+                cache_read_tokens: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn decode_usage_extracts_cache_read_tokens_from_prompt_tokens_details() {
+        // zhipu / OpenAI 兼容形态
+        let wire = wire_response(
+            vec![choice(assistant_message(Some("hi")), Some("stop"))],
+            Some(WireUsage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                prompt_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: Some(40),
+                    reasoning_tokens: None,
+                }),
+                completion_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: None,
+                    reasoning_tokens: Some(84),
+                }),
+                ..Default::default()
+            }),
+        );
+        let response = decode_response(wire).unwrap();
+        assert_eq!(
+            response.usage,
+            Some(Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 40,
+            })
+        );
+    }
+
+    #[test]
+    fn decode_usage_falls_back_to_kimi_top_level_cached_tokens() {
+        // kimi：顶层 cached_tokens 与 prompt_tokens_details.cached_tokens 同时出现
+        let wire = wire_response(
+            vec![choice(assistant_message(Some("hi")), Some("stop"))],
+            Some(WireUsage {
+                prompt_tokens: 58,
+                completion_tokens: 37,
+                total_tokens: 95,
+                cached_tokens: Some(58),
+                prompt_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: Some(58),
+                    reasoning_tokens: None,
+                }),
+                completion_tokens_details: Some(WireTokenDetails {
+                    reasoning_tokens: Some(19),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+        let response = decode_response(wire).unwrap();
+        assert_eq!(
+            response.usage,
+            Some(Usage {
+                input_tokens: 58,
+                output_tokens: 37,
+                cache_read_tokens: 58,
+            })
+        );
+    }
+
+    #[test]
+    fn decode_usage_falls_back_to_deepseek_prompt_cache_hit_tokens() {
+        // deepseek：缺少 prompt_tokens_details.cached_tokens 时退化到
+        // `prompt_cache_hit_tokens` 顶层冗余字段。
+        let wire = wire_response(
+            vec![choice(assistant_message(Some("hi")), Some("stop"))],
+            Some(WireUsage {
+                prompt_tokens: 308,
+                completion_tokens: 62,
+                total_tokens: 370,
+                prompt_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: None,
+                    reasoning_tokens: None,
+                }),
+                completion_tokens_details: Some(WireTokenDetails {
+                    reasoning_tokens: Some(12),
+                    ..Default::default()
+                }),
+                prompt_cache_hit_tokens: Some(256),
+                prompt_cache_miss_tokens: Some(52),
+                ..Default::default()
+            }),
+        );
+        let response = decode_response(wire).unwrap();
+        assert_eq!(
+            response.usage,
+            Some(Usage {
+                input_tokens: 308,
+                output_tokens: 62,
+                cache_read_tokens: 256,
+            })
+        );
+    }
+
+    #[test]
+    fn decode_usage_with_no_cache_fields_has_zero_cache_read_tokens() {
+        let wire = wire_response(
+            vec![choice(assistant_message(Some("hi")), Some("stop"))],
+            Some(WireUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+                ..Default::default()
+            }),
+        );
+        let response = decode_response(wire).unwrap();
+        assert_eq!(
+            response.usage,
+            Some(Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_tokens: 0,
             })
         );
     }
@@ -894,6 +1027,7 @@ mod tests {
                     prompt_tokens: 1,
                     completion_tokens: 2,
                     total_tokens: 3,
+                    ..Default::default()
                 }),
             ))
             .unwrap();

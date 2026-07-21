@@ -23,7 +23,7 @@ impl ModelInfo {
     pub fn minimal(id: impl Into<String>, provider: ProviderName) -> Self {
         Self {
             id: id.into(),
-            provider: provider,
+            provider,
             context_window: 0,
             max_output_tokens: 0,
             capabilities: ModelCapabilities::default(),

@@ -52,6 +52,7 @@ fn estimate_text_tokens(char_count: usize) -> u32 {
 /// `ToolUse.input`、`ToolResult` 内嵌 `content` 均计入；`Image` 不计入）。
 fn content_block_char_count(block: &ContentBlock) -> usize {
     match block {
+        ContentBlock::Thinking { thinking } => thinking.chars().count(),
         ContentBlock::Text { text } => text.chars().count(),
         ContentBlock::Image { .. } => 0,
         ContentBlock::ToolUse { name, input, .. } => {
@@ -80,7 +81,9 @@ fn contains_image(blocks: &[ContentBlock]) -> bool {
     blocks.iter().any(|block| match block {
         ContentBlock::Image { .. } => true,
         ContentBlock::ToolResult { content, .. } => contains_image(content),
-        ContentBlock::Text { .. } | ContentBlock::ToolUse { .. } => false,
+        ContentBlock::Thinking { .. }
+        | ContentBlock::Text { .. }
+        | ContentBlock::ToolUse { .. } => false,
     })
 }
 

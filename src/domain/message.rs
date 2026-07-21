@@ -24,6 +24,9 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    Thinking {
+        thinking: String,
+    },
     Text {
         text: String,
     },
@@ -44,6 +47,13 @@ pub enum ContentBlock {
 }
 
 impl ContentBlock {
+    /// 便捷构造一个 `ContentBlock::Thinking` 内容块。
+    pub fn thinking(thinking: impl Into<String>) -> ContentBlock {
+        ContentBlock::Thinking {
+            thinking: thinking.into(),
+        }
+    }
+
     /// 便捷构造一个 `ContentBlock::Text` 内容块。
     pub fn text(text: impl Into<String>) -> ContentBlock {
         ContentBlock::Text { text: text.into() }
@@ -109,6 +119,23 @@ mod tests {
             ContentBlock::Text { text } => assert_eq!(text, "hello"),
             _ => panic!("expected Text block"),
         }
+    }
+
+    #[test]
+    fn content_block_thinking_constructor() {
+        let block = ContentBlock::thinking("reasoning...");
+        match block {
+            ContentBlock::Thinking { thinking } => assert_eq!(thinking, "reasoning..."),
+            _ => panic!("expected Thinking block"),
+        }
+    }
+
+    #[test]
+    fn content_block_thinking_tag_is_snake_case() {
+        let block = ContentBlock::thinking("let me think");
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "thinking");
+        assert_eq!(json["thinking"], "let me think");
     }
 
     #[test]

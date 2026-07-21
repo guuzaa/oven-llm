@@ -16,11 +16,11 @@
 use thiserror::Error;
 
 use super::types::{
-    ChatCompletionRequest, StopValue, StreamOptions, WireFunction, WireMessage, WireTool,
-    WireToolCall, WireToolCallFunction,
+    ChatCompletionRequest, StopValue, StreamOptions, WireFunction, WireMessage, WireThinking,
+    WireTool, WireToolCall, WireToolCallFunction,
 };
 use crate::domain::message::{ContentBlock, Message, Role};
-use crate::domain::request::Request;
+use crate::domain::request::{ReasoningEffort, Request, ThinkingMode};
 use crate::domain::tool::{Tool, ToolChoice};
 
 /// `encode_request` 及其子函数的编码失败原因。
@@ -83,6 +83,20 @@ pub(crate) fn encode_request(
         None
     };
 
+    let thinking = req.thinking.map(|t| WireThinking {
+        mode: match t {
+            ThinkingMode::Enabled => "enabled".to_string(),
+            ThinkingMode::Disabled => "disabled".to_string(),
+        },
+    });
+
+    let reasoning_effort = req.reasoning_effort.map(|e| match e {
+        ReasoningEffort::None => "none".to_string(),
+        ReasoningEffort::Low => "low".to_string(),
+        ReasoningEffort::Medium => "medium".to_string(),
+        ReasoningEffort::High => "high".to_string(),
+    });
+
     Ok(ChatCompletionRequest {
         model: req.model.as_str().to_owned(),
         messages,
@@ -92,6 +106,8 @@ pub(crate) fn encode_request(
         top_p: req.sampling.top_p,
         max_tokens: req.sampling.max_tokens,
         stop,
+        thinking,
+        reasoning_effort,
         stream,
         stream_options,
     })
@@ -144,6 +160,11 @@ fn encode_user_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<
         match block {
             ContentBlock::Text { .. } | ContentBlock::Image { .. } => {
                 pending.push(block);
+            }
+            ContentBlock::Thinking { .. } => {
+                return Err(EncodeError::InvalidContent(
+                    "Thinking block is not allowed in a Role::User message".to_string(),
+                ));
             }
             ContentBlock::ToolUse { .. } => {
                 return Err(EncodeError::InvalidContent(
@@ -233,6 +254,7 @@ fn encode_assistant_message(message: &Message) -> Result<WireMessage, EncodeErro
 
     for block in &message.content {
         match block {
+            ContentBlock::Thinking { .. } => { /* 不回传思维内容 */ }
             ContentBlock::Text { text: t } => text.push_str(t),
             ContentBlock::ToolUse { id, name, input } => {
                 tool_calls.push(WireToolCall {
@@ -294,7 +316,7 @@ fn encode_tool_choice(choice: &ToolChoice) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::SamplingParams;
+    use crate::domain::request::{ReasoningEffort, SamplingParams, ThinkingMode};
 
     // --- encode_request: system field (Requirement 3.1) ---
 
@@ -656,5 +678,80 @@ mod tests {
         let wire = encode_request(&req, false).unwrap();
         assert!(!wire.stream);
         assert_eq!(wire.stream_options, None);
+    }
+
+    #[test]
+    fn encode_request_thinking_enabled() {
+        let req = Request {
+            thinking: Some(ThinkingMode::Enabled),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        let thinking = wire.thinking.unwrap();
+        assert_eq!(thinking.mode, "enabled");
+    }
+
+    #[test]
+    fn encode_request_thinking_disabled() {
+        let req = Request {
+            thinking: Some(ThinkingMode::Disabled),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        let thinking = wire.thinking.unwrap();
+        assert_eq!(thinking.mode, "disabled");
+    }
+
+    #[test]
+    fn encode_request_thinking_none_is_absent() {
+        let req = Request::default();
+        let wire = encode_request(&req, false).unwrap();
+        assert!(wire.thinking.is_none());
+    }
+
+    #[test]
+    fn encode_request_reasoning_effort_high() {
+        let req = Request {
+            reasoning_effort: Some(ReasoningEffort::High),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        assert_eq!(wire.reasoning_effort, Some("high".to_string()));
+    }
+
+    #[test]
+    fn encode_request_reasoning_effort_none_is_absent() {
+        let req = Request::default();
+        let wire = encode_request(&req, false).unwrap();
+        assert!(wire.reasoning_effort.is_none());
+    }
+
+    #[test]
+    fn encode_request_all_reasoning_effort_levels() {
+        for (effort, expected) in [
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+        ] {
+            let req = Request {
+                reasoning_effort: Some(effort),
+                ..Default::default()
+            };
+            let wire = encode_request(&req, false).unwrap();
+            assert_eq!(wire.reasoning_effort, Some(expected.to_string()));
+        }
+    }
+
+    #[test]
+    fn encode_request_thinking_and_reasoning_effort_together() {
+        let req = Request {
+            thinking: Some(ThinkingMode::Enabled),
+            reasoning_effort: Some(ReasoningEffort::Medium),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        assert_eq!(wire.thinking.unwrap().mode, "enabled");
+        assert_eq!(wire.reasoning_effort, Some("medium".to_string()));
     }
 }

@@ -15,8 +15,8 @@ pub fn deepseek_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "deepseek-v4-flash".to_string(),
             provider: ProviderName::DeepSeek,
-            context_window: 128_000,
-            max_output_tokens: 8_192,
+            context_window: 1_000_000,
+            max_output_tokens: 384_000,
             capabilities: ModelCapabilities {
                 supports_vision: false,
                 supports_tools: true,
@@ -34,10 +34,10 @@ pub fn deepseek_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "deepseek-v4-pro".to_string(),
             provider: ProviderName::DeepSeek,
-            context_window: 256_000,
-            max_output_tokens: 8_192,
+            context_window: 1_000_000,
+            max_output_tokens: 384_000,
             capabilities: ModelCapabilities {
-                supports_vision: true,
+                supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: true,
@@ -60,8 +60,8 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "kimi-k3".to_string(),
             provider: ProviderName::Moonshot,
-            context_window: 256_000,
-            max_output_tokens: 8_192,
+            context_window: 1_048_576,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
                 supports_vision: true,
                 supports_tools: true,
@@ -77,12 +77,12 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
             }),
         },
         ModelInfo {
-            id: "kimi-k2.7".to_string(),
+            id: "kimi-k2.7-code".to_string(),
             provider: ProviderName::Moonshot,
-            context_window: 128_000,
-            max_output_tokens: 8_192,
+            context_window: 256_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
-                supports_vision: true,
+                supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: true,
@@ -98,8 +98,8 @@ pub fn moonshot_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "kimi-k2.6".to_string(),
             provider: ProviderName::Moonshot,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
+            context_window: 256_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
                 supports_vision: false,
                 supports_tools: true,
@@ -124,10 +124,10 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "glm-5.2".to_string(),
             provider: ProviderName::Zhipu,
-            context_window: 200_000,
-            max_output_tokens: 16_384,
+            context_window: 1_000_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
-                supports_vision: true,
+                supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: true,
@@ -143,10 +143,10 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "glm-5.1".to_string(),
             provider: ProviderName::Zhipu,
-            context_window: 128_000,
-            max_output_tokens: 8_192,
+            context_window: 200_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
-                supports_vision: true,
+                supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: true,
@@ -160,16 +160,16 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
             }),
         },
         ModelInfo {
-            id: "glm-5.0".to_string(),
+            id: "glm-5".to_string(),
             provider: ProviderName::Zhipu,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
+            context_window: 200_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
                 supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
-                supports_json_mode: false,
-                supports_parallel_tool_calls: false,
+                supports_json_mode: true,
+                supports_parallel_tool_calls: true,
                 supports_system_prompt: true,
                 max_concurrent_tools: Some(32),
             },
@@ -181,14 +181,14 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "glm-4.7-flash".to_string(),
             provider: ProviderName::Zhipu,
-            context_window: 128_000,
-            max_output_tokens: 4_096,
+            context_window: 200_000,
+            max_output_tokens: 128_000,
             capabilities: ModelCapabilities {
                 supports_vision: false,
                 supports_tools: true,
                 supports_streaming: true,
                 supports_json_mode: true,
-                supports_parallel_tool_calls: false,
+                supports_parallel_tool_calls: true,
                 supports_system_prompt: true,
                 max_concurrent_tools: Some(32),
             },

@@ -15,6 +15,7 @@ use super::response::{StopReason, Usage};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
+    ThinkingDelta { thinking: String },
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
 }
@@ -57,6 +58,18 @@ mod tests {
         let json = serde_json::to_value(&delta).unwrap();
         assert_eq!(json["type"], "text_delta");
         assert_eq!(json["text"], "hello");
+        let decoded: Delta = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, delta);
+    }
+
+    #[test]
+    fn delta_thinking_serializes_correctly() {
+        let delta = Delta::ThinkingDelta {
+            thinking: "let me reason...".to_string(),
+        };
+        let json = serde_json::to_value(&delta).unwrap();
+        assert_eq!(json["type"], "thinking_delta");
+        assert_eq!(json["thinking"], "let me reason...");
         let decoded: Delta = serde_json::from_value(json).unwrap();
         assert_eq!(decoded, delta);
     }
@@ -125,6 +138,7 @@ mod tests {
                 input_tokens: 3,
                 output_tokens: 4,
                 cache_read_tokens: 0,
+                reasoning_tokens: 0,
             }),
         };
         let json = serde_json::to_value(&event).unwrap();

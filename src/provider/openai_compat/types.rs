@@ -36,6 +36,10 @@ pub(crate) struct ChatCompletionRequest {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<StopValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<WireThinking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
@@ -48,6 +52,13 @@ pub(crate) struct ChatCompletionRequest {
 pub(crate) enum StopValue {
     Single(String),
     Multiple(Vec<String>),
+}
+
+/// `thinking` 参数的 wire 包装：`{"type": "enabled"}` / `{"type": "disabled"}`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct WireThinking {
+    #[serde(rename = "type")]
+    pub mode: String,
 }
 
 /// 流式请求下用于要求服务端在最后一个 chunk 携带 `usage` 字段。
@@ -135,6 +146,8 @@ pub(crate) struct WireResponseMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WireResponseToolCall>>,
 }
@@ -233,6 +246,8 @@ pub(crate) struct WireStreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WireStreamToolCall>>,
 }
 
@@ -287,6 +302,8 @@ mod tests {
             top_p: None,
             max_tokens: None,
             stop: None,
+            thinking: None,
+            reasoning_effort: None,
             stream: false,
             stream_options: None,
         };
@@ -297,6 +314,8 @@ mod tests {
         assert!(json.get("top_p").is_none());
         assert!(json.get("max_tokens").is_none());
         assert!(json.get("stop").is_none());
+        assert!(json.get("thinking").is_none());
+        assert!(json.get("reasoning_effort").is_none());
         assert!(json.get("stream_options").is_none());
         assert_eq!(json["stream"], false);
     }

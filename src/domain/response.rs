@@ -14,6 +14,8 @@ pub struct Usage {
     pub output_tokens: u32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub cache_read_tokens: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reasoning_tokens: u32,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -55,6 +57,7 @@ mod tests {
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
         assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.reasoning_tokens, 0);
     }
 
     #[test]
@@ -63,11 +66,13 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
             cache_read_tokens: 0,
+            reasoning_tokens: 0,
         };
         let json = serde_json::to_value(usage).unwrap();
         assert_eq!(json["input_tokens"], 10);
         assert_eq!(json["output_tokens"], 20);
         assert!(json.get("cache_read_tokens").is_none());
+        assert!(json.get("reasoning_tokens").is_none());
     }
 
     #[test]
@@ -76,9 +81,22 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
             cache_read_tokens: 5,
+            reasoning_tokens: 0,
         };
         let json = serde_json::to_value(usage).unwrap();
         assert_eq!(json["cache_read_tokens"], 5);
+    }
+
+    #[test]
+    fn usage_serializes_reasoning_tokens_when_nonzero() {
+        let usage = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 0,
+            reasoning_tokens: 8,
+        };
+        let json = serde_json::to_value(usage).unwrap();
+        assert_eq!(json["reasoning_tokens"], 8);
     }
 
     #[test]
@@ -127,6 +145,7 @@ mod tests {
                 input_tokens: 5,
                 output_tokens: 7,
                 cache_read_tokens: 0,
+                reasoning_tokens: 0,
             }),
         };
         let json = serde_json::to_value(&response).unwrap();
@@ -166,6 +185,7 @@ mod tests {
                 input_tokens: 1,
                 output_tokens: 2,
                 cache_read_tokens: 0,
+                reasoning_tokens: 0,
             }),
         };
         let json = serde_json::to_string(&response).unwrap();

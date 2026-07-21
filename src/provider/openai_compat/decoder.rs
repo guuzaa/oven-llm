@@ -100,6 +100,12 @@ pub(crate) fn decode_response(wire: ChatCompletionResponse) -> Result<Response, 
 
     let mut content = Vec::new();
 
+    if let Some(thinking) = choice.message.reasoning_content
+        && !thinking.is_empty()
+    {
+        content.push(ContentBlock::Thinking { thinking });
+    }
+
     if let Some(text) = choice.message.content {
         content.push(ContentBlock::Text { text });
     }
@@ -159,6 +165,10 @@ fn decode_usage(usage: WireUsage) -> Usage {
         input_tokens: usage.prompt_tokens,
         output_tokens: usage.completion_tokens,
         cache_read_tokens,
+        reasoning_tokens: usage
+            .completion_tokens_details
+            .and_then(|d| d.reasoning_tokens)
+            .unwrap_or(0),
     }
 }
 
@@ -199,6 +209,8 @@ pub(crate) struct StreamDecoder {
     next_block_index: usize,
     /// 文本块（若已开启）对应的内容块索引；文本块全局只会开启一次。
     text_block_index: Option<usize>,
+    /// 思维块（若已开启）对应的内容块索引；思维块全局只会开启一次。
+    thinking_block_index: Option<usize>,
 }
 
 impl StreamDecoder {
@@ -291,8 +303,20 @@ impl StreamDecoder {
         }
     }
 
-    /// 处理单个 choice 的 delta：分派文本内容与工具调用增量。
+    /// 处理单个 choice 的 delta：分派文本内容、思维内容与工具调用增量。
     fn decode_delta(&mut self, delta: &WireStreamDelta, events: &mut Vec<StreamEvent>) {
+        if let Some(thinking) = &delta.reasoning_content {
+            let index = self.ensure_thinking_block(events);
+            if !thinking.is_empty() {
+                events.push(StreamEvent::ContentBlockDelta {
+                    index,
+                    delta: Delta::ThinkingDelta {
+                        thinking: thinking.clone(),
+                    },
+                });
+            }
+        }
+
         if let Some(text) = &delta.content {
             let index = self.ensure_text_block(events);
             if !text.is_empty() {
@@ -324,6 +348,25 @@ impl StreamDecoder {
             index,
             block: ContentBlock::Text {
                 text: String::new(),
+            },
+        });
+        index
+    }
+
+    /// 首次出现思维 delta 时开启思维块并返回其索引；已开启时直接返回既有
+    /// 索引（思维块全局只开启一次）。
+    fn ensure_thinking_block(&mut self, events: &mut Vec<StreamEvent>) -> usize {
+        if let Some(index) = self.thinking_block_index {
+            return index;
+        }
+
+        let index = self.allocate_block_index();
+        self.thinking_block_index = Some(index);
+        self.open_blocks.insert(index);
+        events.push(StreamEvent::ContentBlockStart {
+            index,
+            block: ContentBlock::Thinking {
+                thinking: String::new(),
             },
         });
         index
@@ -428,6 +471,7 @@ mod tests {
         WireResponseMessage {
             role: "assistant".to_string(),
             content: content.map(|s| s.to_string()),
+            reasoning_content: None,
             tool_calls: None,
         }
     }
@@ -473,7 +517,7 @@ mod tests {
         let message = WireResponseMessage {
             role: "system".to_string(),
             content: Some("hi".to_string()),
-            tool_calls: None,
+            ..Default::default()
         };
         let wire = wire_response(vec![choice(message, Some("stop"))], None);
         let err = decode_response(wire).unwrap_err();
@@ -498,6 +542,7 @@ mod tests {
                     arguments: "not json".to_string(),
                 },
             }]),
+            ..Default::default()
         };
         let wire = wire_response(vec![choice(message, Some("tool_calls"))], None);
         let err = decode_response(wire).unwrap_err();
@@ -567,6 +612,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 5,
                 cache_read_tokens: 0,
+                reasoning_tokens: 0,
             })
         );
     }
@@ -598,6 +644,7 @@ mod tests {
                 input_tokens: 100,
                 output_tokens: 50,
                 cache_read_tokens: 40,
+                reasoning_tokens: 84,
             })
         );
     }
@@ -630,6 +677,7 @@ mod tests {
                 input_tokens: 58,
                 output_tokens: 37,
                 cache_read_tokens: 58,
+                reasoning_tokens: 19,
             })
         );
     }
@@ -664,6 +712,7 @@ mod tests {
                 input_tokens: 308,
                 output_tokens: 62,
                 cache_read_tokens: 256,
+                reasoning_tokens: 12,
             })
         );
     }
@@ -686,6 +735,7 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 5,
                 cache_read_tokens: 0,
+                reasoning_tokens: 0,
             })
         );
     }
@@ -733,6 +783,7 @@ mod tests {
                     arguments: "{\"city\":\"Beijing\"}".to_string(),
                 },
             }]),
+            ..Default::default()
         };
         let wire = wire_response(vec![choice(message, Some("tool_calls"))], None);
         let response = decode_response(wire).unwrap();
@@ -761,6 +812,7 @@ mod tests {
                     arguments: "{}".to_string(),
                 },
             }]),
+            ..Default::default()
         };
         let wire = wire_response(vec![choice(message, Some("tool_calls"))], None);
         let response = decode_response(wire).unwrap();
@@ -791,9 +843,8 @@ mod tests {
         WireStreamChoice {
             index: 0,
             delta: WireStreamDelta {
-                role: None,
                 content: Some(text.to_string()),
-                tool_calls: None,
+                ..Default::default()
             },
             finish_reason: finish_reason.map(|s| s.to_string()),
         }
@@ -809,8 +860,6 @@ mod tests {
         WireStreamChoice {
             index: 0,
             delta: WireStreamDelta {
-                role: None,
-                content: None,
                 tool_calls: Some(vec![WireStreamToolCall {
                     index: wire_index,
                     id: id.map(|s| s.to_string()),
@@ -820,6 +869,7 @@ mod tests {
                         arguments: arguments.map(|s| s.to_string()),
                     }),
                 }]),
+                ..Default::default()
             },
             finish_reason: finish_reason.map(|s| s.to_string()),
         }

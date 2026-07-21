@@ -78,7 +78,7 @@ impl OpenAICompatProvider {
 
         Self {
             base_url: base_url.into(),
-            provider_name: provider_name,
+            provider_name,
             api_key,
             extra_headers,
             model_catalog,

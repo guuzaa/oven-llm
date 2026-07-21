@@ -20,7 +20,7 @@ use std::io::Write;
 
 use oven_llm::{
     ContentBlock, Delta, Message, ModelId, OpenAICompatProvider, Provider, Request, SamplingParams,
-    StreamEvent,
+    StreamEvent, ThinkingMode,
 };
 use secrecy::SecretString;
 
@@ -44,8 +44,14 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
                 response.id, response.stop_reason
             );
             for block in &response.content {
-                if let ContentBlock::Text { text } = block {
-                    println!("  text: {text}");
+                match block {
+                    ContentBlock::Thinking { thinking } => {
+                        println!("  \x1b[90mthinking: {thinking}\x1b[0m");
+                    }
+                    ContentBlock::Text { text } => {
+                        println!("  text: {text}");
+                    }
+                    _ => {}
                 }
             }
         }
@@ -59,6 +65,13 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
             use futures::StreamExt;
             while let Some(event) = event_stream.next().await {
                 match event {
+                    Ok(StreamEvent::ContentBlockDelta {
+                        delta: Delta::ThinkingDelta { thinking },
+                        ..
+                    }) => {
+                        print!("\x1b[90m{thinking}\x1b[0m");
+                        io::stdout().flush().unwrap();
+                    }
                     Ok(StreamEvent::ContentBlockDelta {
                         delta: Delta::TextDelta { text },
                         ..
@@ -99,6 +112,7 @@ async fn main() {
             temperature: Some(0.0),
             ..Default::default()
         },
+        thinking: Some(ThinkingMode::Enabled),
         ..Default::default()
     };
 

@@ -57,6 +57,25 @@ impl fmt::Display for ModelId {
     }
 }
 
+/// 思维链开关：启用或禁用模型的 thinking/reasoning 输出。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ThinkingMode {
+    #[serde(rename = "enabled")]
+    Enabled,
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+
+/// 推理强度：控制模型在 thinking 阶段投入的计算量。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
 /// 采样参数：控制模型生成时的随机性与长度限制。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SamplingParams {
@@ -75,6 +94,8 @@ pub struct Request {
     pub tools: Vec<Tool>,
     pub tool_choice: ToolChoice,
     pub sampling: SamplingParams,
+    pub thinking: Option<ThinkingMode>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Provider 私有参数直通（跳过标准 Serialize，由 transport 层 merge 进
     /// wire JSON body，键名需与 provider wire format 一致，不应与标准字段重名）。
     #[serde(skip, default)]
@@ -119,6 +140,8 @@ mod tests {
         assert!(req.tools.is_empty());
         assert_eq!(req.tool_choice, ToolChoice::Auto);
         assert_eq!(req.sampling, SamplingParams::default());
+        assert_eq!(req.thinking, None);
+        assert_eq!(req.reasoning_effort, None);
         assert!(req.provider_options.is_empty());
     }
 
@@ -164,6 +187,8 @@ mod tests {
                 temperature: Some(0.5),
                 ..Default::default()
             },
+            thinking: Some(ThinkingMode::Enabled),
+            reasoning_effort: Some(ReasoningEffort::High),
             provider_options: serde_json::Map::new(),
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -172,7 +197,56 @@ mod tests {
         assert_eq!(decoded.system, req.system);
         assert_eq!(decoded.tool_choice, req.tool_choice);
         assert_eq!(decoded.sampling, req.sampling);
+        assert_eq!(decoded.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(decoded.reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(decoded.messages[0].role, Role::User);
         assert!(decoded.provider_options.is_empty());
+    }
+
+    #[test]
+    fn thinking_mode_serializes_as_string() {
+        assert_eq!(
+            serde_json::to_value(ThinkingMode::Enabled).unwrap(),
+            "enabled"
+        );
+        assert_eq!(
+            serde_json::to_value(ThinkingMode::Disabled).unwrap(),
+            "disabled"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_serializes_as_lowercase() {
+        assert_eq!(serde_json::to_value(ReasoningEffort::None).unwrap(), "none");
+        assert_eq!(serde_json::to_value(ReasoningEffort::Low).unwrap(), "low");
+        assert_eq!(
+            serde_json::to_value(ReasoningEffort::Medium).unwrap(),
+            "medium"
+        );
+        assert_eq!(serde_json::to_value(ReasoningEffort::High).unwrap(), "high");
+    }
+
+    #[test]
+    fn thinking_mode_deserializes_from_string() {
+        assert_eq!(
+            serde_json::from_value::<ThinkingMode>(serde_json::json!("enabled")).unwrap(),
+            ThinkingMode::Enabled
+        );
+        assert_eq!(
+            serde_json::from_value::<ThinkingMode>(serde_json::json!("disabled")).unwrap(),
+            ThinkingMode::Disabled
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_deserializes_from_string() {
+        assert_eq!(
+            serde_json::from_value::<ReasoningEffort>(serde_json::json!("none")).unwrap(),
+            ReasoningEffort::None
+        );
+        assert_eq!(
+            serde_json::from_value::<ReasoningEffort>(serde_json::json!("high")).unwrap(),
+            ReasoningEffort::High
+        );
     }
 }

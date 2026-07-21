@@ -112,6 +112,19 @@ async fn collect_streamed_turn<P: Provider + ?Sized>(
                 blocks.insert(index, block);
             }
             StreamEvent::ContentBlockDelta { index, delta } => match delta {
+                Delta::ThinkingDelta { thinking } => {
+                    let Some(ContentBlock::Thinking {
+                        thinking: accumulated,
+                    }) = blocks.get_mut(&index)
+                    else {
+                        return Err(invalid_stream(format!(
+                            "thinking delta received for unknown/non-thinking block {index}"
+                        )));
+                    };
+                    print!("\x1b[90m{thinking}\x1b[0m");
+                    io::stdout().flush()?;
+                    accumulated.push_str(&thinking);
+                }
                 Delta::TextDelta { text } => {
                     let Some(ContentBlock::Text { text: accumulated }) = blocks.get_mut(&index)
                     else {

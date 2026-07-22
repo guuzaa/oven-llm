@@ -31,6 +31,14 @@ pub enum ProviderError {
     InvalidRequest(String),
 }
 
+impl From<crate::domain::StreamCollectorError> for ProviderError {
+    fn from(err: crate::domain::StreamCollectorError) -> Self {
+        match err {
+            crate::domain::StreamCollectorError::Stream(msg) => ProviderError::Stream(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

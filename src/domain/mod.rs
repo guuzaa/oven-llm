@@ -11,5 +11,5 @@ pub use request::{
     BuilderError, ModelId, ReasoningEffort, Request, RequestBuilder, SamplingParams, ThinkingMode,
 };
 pub use response::{Response, StopReason, Usage};
-pub use stream::{Delta, StreamEvent};
+pub use stream::{Delta, StreamCollector, StreamCollectorError, StreamEvent};
 pub use tool::{Tool, ToolChoice};

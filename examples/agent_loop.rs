@@ -6,7 +6,6 @@
 //! 默认将当前目录视为工作区；可通过 `CODING_AGENT_ROOT` 限制 agent 可读写的根目录。
 
 use std::{
-    collections::BTreeMap,
     env,
     error::Error,
     fs,
@@ -16,8 +15,8 @@ use std::{
 
 use futures::StreamExt;
 use oven_llm::{
-    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StopReason, StreamEvent,
-    Tool,
+    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StopReason,
+    StreamCollector, StreamEvent, Tool,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -25,12 +24,6 @@ use serde_json::{Value, json};
 type ExampleResult<T> = Result<T, Box<dyn Error>>;
 
 const MAX_FILE_BYTES: u64 = 64 * 1024;
-
-#[derive(Debug)]
-struct StreamedTurn {
-    content: Vec<ContentBlock>,
-    stop_reason: Option<StopReason>,
-}
 
 #[tokio::main]
 async fn main() -> ExampleResult<()> {
@@ -57,125 +50,63 @@ async fn main() -> ExampleResult<()> {
         .expect("model is set");
 
     loop {
-        let turn = collect_streamed_turn(&provider, &request).await?;
-        let requests_tools = turn.stop_reason == Some(StopReason::ToolUse)
-            && turn
+        let response = collect_streamed_response(&provider, &request).await?;
+        let requests_tools = response.stop_reason == Some(StopReason::ToolUse)
+            && response
                 .content
                 .iter()
                 .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
 
         // 关键顺序：先提交完整的 assistant 消息（含 tool_use），再执行工具并追加结果。
         // OpenAI 兼容接口要求 role=tool 紧跟在发起该调用的 assistant 消息之后。
-        request
-            .messages
-            .push(Message::assistant(turn.content.clone()));
+        request.message(Message::assistant(response.content.clone()));
 
         if !requests_tools {
             break;
         }
 
-        let tool_results = execute_requested_tools(&workspace_root, &turn.content);
-        request.messages.push(Message::user(tool_results));
+        let tool_results = execute_requested_tools(&workspace_root, &response.content);
+        request.message(Message::user(tool_results));
     }
 
     Ok(())
 }
 
-/// 消费一次流式响应，并按内容块 index 重建一条完整 assistant 消息。
+/// 消费一次流式响应，利用 [`StreamCollector`] 拼装完整的 assistant [`Response`]。
 ///
-/// 文本和工具参数都可能被拆为多个 delta；工具参数必须在流结束后才可解析为 JSON。
-async fn collect_streamed_turn<P: Provider + ?Sized>(
+/// 文本和 thinking 增量会实时打印到终端；工具参数则静默累积。
+async fn collect_streamed_response<P: Provider + ?Sized>(
     provider: &P,
     request: &Request,
-) -> ExampleResult<StreamedTurn> {
+) -> ExampleResult<oven_llm::Response> {
     let mut stream = provider.stream(request).await?;
-    let mut blocks = BTreeMap::<usize, ContentBlock>::new();
-    let mut tool_arguments = BTreeMap::<usize, String>::new();
-    let mut stop_reason = None;
+    let mut collector = StreamCollector::new();
 
     print!("\nassistant: ");
     io::stdout().flush()?;
 
     while let Some(event) = stream.next().await {
-        match event? {
-            StreamEvent::ContentBlockStart { index, block } => {
-                if let ContentBlock::ToolUse { input, .. } = &block {
-                    let initial_arguments = match input {
-                        Value::String(arguments) => arguments.clone(),
-                        arguments => arguments.to_string(),
-                    };
-                    tool_arguments.insert(index, initial_arguments);
-                }
-                blocks.insert(index, block);
-            }
-            StreamEvent::ContentBlockDelta { index, delta } => match delta {
+        let event = event?;
+
+        if let StreamEvent::ContentBlockDelta { delta, .. } = &event {
+            match delta {
                 Delta::ThinkingDelta { thinking } => {
-                    let Some(ContentBlock::Thinking {
-                        thinking: accumulated,
-                    }) = blocks.get_mut(&index)
-                    else {
-                        return Err(invalid_stream(format!(
-                            "thinking delta received for unknown/non-thinking block {index}"
-                        )));
-                    };
                     print!("\x1b[90m{thinking}\x1b[0m");
                     io::stdout().flush()?;
-                    accumulated.push_str(&thinking);
                 }
                 Delta::TextDelta { text } => {
-                    let Some(ContentBlock::Text { text: accumulated }) = blocks.get_mut(&index)
-                    else {
-                        return Err(invalid_stream(format!(
-                            "text delta received for unknown/non-text block {index}"
-                        )));
-                    };
                     print!("{text}");
                     io::stdout().flush()?;
-                    accumulated.push_str(&text);
                 }
-                Delta::InputJsonDelta { partial_json } => {
-                    let Some(arguments) = tool_arguments.get_mut(&index) else {
-                        return Err(invalid_stream(format!(
-                            "tool argument delta received for unknown tool block {index}"
-                        )));
-                    };
-                    arguments.push_str(&partial_json);
-                }
-            },
-            StreamEvent::MessageDelta {
-                stop_reason: received_stop_reason,
-                ..
-            } => stop_reason = received_stop_reason,
-            StreamEvent::MessageStart { .. }
-            | StreamEvent::ContentBlockStop { .. }
-            | StreamEvent::MessageStop => {}
+                Delta::InputJsonDelta { .. } => {}
+            }
         }
+
+        collector.push(&event);
     }
     println!();
 
-    // 将分片的 arguments JSON 回填到 ToolUse 块，之后才能把该消息加入历史。
-    for (index, raw_arguments) in tool_arguments {
-        let input = if raw_arguments.trim().is_empty() {
-            json!({})
-        } else {
-            serde_json::from_str(&raw_arguments).map_err(|error| {
-                invalid_stream(format!(
-                    "invalid JSON arguments for tool block {index}: {error}"
-                ))
-            })?
-        };
-        let Some(ContentBlock::ToolUse { input: target, .. }) = blocks.get_mut(&index) else {
-            return Err(invalid_stream(format!(
-                "tool arguments collected for non-tool block {index}"
-            )));
-        };
-        *target = input;
-    }
-
-    Ok(StreamedTurn {
-        content: blocks.into_values().collect(),
-        stop_reason,
-    })
+    Ok(collector.finish()?)
 }
 
 fn coding_tools() -> Vec<Tool> {
@@ -310,8 +241,4 @@ fn coding_task() -> String {
     } else {
         task
     }
-}
-
-fn invalid_stream(message: String) -> Box<dyn Error> {
-    Box::new(io::Error::new(io::ErrorKind::InvalidData, message))
 }

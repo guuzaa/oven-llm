@@ -16,8 +16,8 @@ use std::{
 
 use futures::StreamExt;
 use oven_llm::{
-    ContentBlock, Delta, Message, ModelId, OpenAICompatProvider, Provider, Request, SamplingParams,
-    StopReason, StreamEvent, Tool,
+    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StopReason, StreamEvent,
+    Tool,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -42,22 +42,19 @@ async fn main() -> ExampleResult<()> {
     println!("coding workspace: {}", workspace_root.display());
     println!("task: {task}");
 
-    let mut request = Request {
-        model: ModelId::from("deepseek-v4-flash"),
-        system: Some(format!(
+    let mut request = Request::builder()
+        .model("deepseek-v4-flash")
+        .system(format!(
             "You are a careful coding agent. Your workspace root is {}. \
              Use read_file before changing a file. Use write_file only for files inside that root. \
              Make the requested change, then give a concise final summary.",
             workspace_root.display()
-        )),
-        messages: vec![Message::user(vec![ContentBlock::text(task)])],
-        tools: coding_tools(),
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+        ))
+        .message(Message::user(vec![ContentBlock::text(task)]))
+        .tools(coding_tools())
+        .temperature(0.0)
+        .build()
+        .expect("model is set");
 
     loop {
         let turn = collect_streamed_turn(&provider, &request).await?;

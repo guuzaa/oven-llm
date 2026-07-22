@@ -7,7 +7,9 @@ pub mod stream;
 pub mod tool;
 
 pub use message::{ContentBlock, ImageSource, Message, Role};
-pub use request::{ModelId, ReasoningEffort, Request, SamplingParams, ThinkingMode};
+pub use request::{
+    BuilderError, ModelId, ReasoningEffort, Request, RequestBuilder, SamplingParams, ThinkingMode,
+};
 pub use response::{Response, StopReason, Usage};
 pub use stream::{Delta, StreamEvent};
 pub use tool::{Tool, ToolChoice};

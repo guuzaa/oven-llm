@@ -102,14 +102,15 @@ async fn main() {
     )));
 
     // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
-    let mut request = Request::default();
-    request
+    let request = Request::builder()
         .model("deepseek-v4-flash")
         .message(Message::user(vec![ContentBlock::text(
             "用一句话介绍一下 Rust 语言。",
         )]))
         .temperature(0.0)
-        .thinking(ThinkingMode::Enabled);
+        .thinking(ThinkingMode::Enabled)
+        .build()
+        .expect("model is set");
 
     provider_example(provider, &request).await
 }

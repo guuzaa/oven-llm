@@ -6,6 +6,7 @@
 use std::{borrow::Borrow, fmt};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use super::message::Message;
 use super::tool::{Tool, ToolChoice};
@@ -77,12 +78,23 @@ pub enum ReasoningEffort {
 }
 
 /// 采样参数：控制模型生成时的随机性与长度限制。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SamplingParams {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     pub stop: Option<Vec<String>>,
+}
+
+impl Default for SamplingParams {
+    fn default() -> Self {
+        Self {
+            temperature: Some(0.7),
+            top_p: None,
+            max_tokens: Some(2048),
+            stop: None,
+        }
+    }
 }
 
 /// 一次 LLM 调用的完整请求，与具体 provider 无关。
@@ -192,6 +204,148 @@ impl Request {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Builder（消费式 `self` 方法，用于构造阶段的链式调用）
+// ---------------------------------------------------------------------------
+
+/// [`RequestBuilder`] 构建失败的错误类型。
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum BuilderError {
+    /// 必需字段 `model` 未设置。
+    #[error("builder missing required field: model")]
+    MissingModel,
+}
+
+/// [`Request`] 的构造器。通过 [`Request::builder()`] 创建。
+///
+/// ```rust
+/// use oven_llm::*;
+///
+/// let req = Request::builder()
+///     .model("gpt-4")
+///     .system("be helpful")
+///     .message(Message::user(vec![ContentBlock::text("hello")]))
+///     .temperature(0.7)
+///     .thinking(ThinkingMode::Enabled)
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Default)]
+pub struct RequestBuilder {
+    model: Option<ModelId>,
+    system: Option<String>,
+    messages: Vec<Message>,
+    tools: Vec<Tool>,
+    tool_choice: ToolChoice,
+    sampling: SamplingParams,
+    thinking: Option<ThinkingMode>,
+    reasoning_effort: Option<ReasoningEffort>,
+    provider_options: serde_json::Map<String, serde_json::Value>,
+}
+
+impl RequestBuilder {
+    /// 设置模型标识。
+    pub fn model(mut self, model: impl Into<ModelId>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// 设置 system 提示。
+    pub fn system(mut self, system: impl Into<String>) -> Self {
+        self.system = Some(system.into());
+        self
+    }
+
+    /// 追加一条消息。
+    pub fn message(mut self, msg: Message) -> Self {
+        self.messages.push(msg);
+        self
+    }
+
+    /// 追加一个工具。
+    pub fn tool(mut self, tool: Tool) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
+    /// 替换全部工具。
+    pub fn tools(mut self, tools: Vec<Tool>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// 设置 tool_choice。
+    pub fn tool_choice(mut self, choice: ToolChoice) -> Self {
+        self.tool_choice = choice;
+        self
+    }
+
+    /// 设置 temperature。
+    pub fn temperature(mut self, value: f32) -> Self {
+        self.sampling.temperature = Some(value);
+        self
+    }
+
+    /// 设置 top_p。
+    pub fn top_p(mut self, value: f32) -> Self {
+        self.sampling.top_p = Some(value);
+        self
+    }
+
+    /// 设置 max_tokens。
+    pub fn max_tokens(mut self, value: u32) -> Self {
+        self.sampling.max_tokens = Some(value);
+        self
+    }
+
+    /// 设置 stop 序列。
+    pub fn stop(mut self, sequences: Vec<String>) -> Self {
+        self.sampling.stop = Some(sequences);
+        self
+    }
+
+    /// 设置思维链模式。
+    pub fn thinking(mut self, mode: ThinkingMode) -> Self {
+        self.thinking = Some(mode);
+        self
+    }
+
+    /// 设置推理强度。
+    pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
+        self
+    }
+
+    /// 添加一个 provider 私有参数。
+    pub fn provider_option(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.provider_options.insert(key.into(), value);
+        self
+    }
+
+    /// 构建 [`Request`]。未调用 [`model`](Self::model) 时返回错误。
+    pub fn build(self) -> Result<Request, BuilderError> {
+        let model = self.model.ok_or(BuilderError::MissingModel)?;
+        Ok(Request {
+            model,
+            system: self.system,
+            messages: self.messages,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
+            sampling: self.sampling,
+            thinking: self.thinking,
+            reasoning_effort: self.reasoning_effort,
+            provider_options: self.provider_options,
+        })
+    }
+}
+
+impl Request {
+    /// 创建 [`RequestBuilder`]。
+    pub fn builder() -> RequestBuilder {
+        RequestBuilder::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,9 +354,9 @@ mod tests {
     #[test]
     fn sampling_params_default_is_all_none() {
         let params = SamplingParams::default();
-        assert_eq!(params.temperature, None);
+        assert_eq!(params.temperature, Some(0.7));
         assert_eq!(params.top_p, None);
-        assert_eq!(params.max_tokens, None);
+        assert_eq!(params.max_tokens, Some(2048));
         assert_eq!(params.stop, None);
     }
 
@@ -341,6 +495,54 @@ mod tests {
     }
 
     #[test]
+    fn builder_chain_produces_correct_request() {
+        let req = Request::builder()
+            .model("gpt-4")
+            .system("be helpful")
+            .message(Message::user(vec![ContentBlock::text("hello")]))
+            .message(Message::assistant(vec![ContentBlock::text("hi")]))
+            .tool(Tool {
+                name: "search".into(),
+                description: Some("Search the web".into()),
+                input_schema: serde_json::json!({"type": "object"}),
+            })
+            .tool_choice(ToolChoice::Auto)
+            .temperature(0.7)
+            .top_p(0.9)
+            .max_tokens(1024)
+            .stop(vec!["STOP".into()])
+            .thinking(ThinkingMode::Enabled)
+            .reasoning_effort(ReasoningEffort::High)
+            .provider_option("top_k", serde_json::json!(40))
+            .build()
+            .unwrap();
+
+        assert_eq!(req.model.as_str(), "gpt-4");
+        assert_eq!(req.system.as_deref(), Some("be helpful"));
+        assert_eq!(req.messages.len(), 2);
+        assert_eq!(req.messages[0].role, Role::User);
+        assert_eq!(req.messages[1].role, Role::Assistant);
+        assert_eq!(req.tools.len(), 1);
+        assert_eq!(req.tools[0].name, "search");
+        assert_eq!(req.tool_choice, ToolChoice::Auto);
+        assert_eq!(req.sampling.temperature, Some(0.7));
+        assert_eq!(req.sampling.top_p, Some(0.9));
+        assert_eq!(req.sampling.max_tokens, Some(1024));
+        assert_eq!(req.sampling.stop.as_ref().unwrap(), &["STOP".to_string()]);
+        assert_eq!(req.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::High));
+        assert_eq!(req.provider_options["top_k"], 40);
+    }
+
+    #[test]
+    fn builder_errors_when_model_missing() {
+        let err = Request::builder().system("be helpful").build().unwrap_err();
+
+        assert_eq!(err, BuilderError::MissingModel);
+        assert_eq!(err.to_string(), "builder missing required field: model");
+    }
+
+    #[test]
     fn fluent_setters_chain_correctly() {
         let mut req = Request::default();
         req.model("gpt-4")
@@ -437,9 +639,9 @@ mod tests {
 
     #[test]
     fn realistic_construction_and_mutation() {
-        // Construction phase
-        let mut req = Request::default();
-        req.model("claude-sonnet-4-20250514")
+        // Construction phase — use builder
+        let mut req = Request::builder()
+            .model("claude-sonnet-4-20250514")
             .system("You are a coding assistant.")
             .message(Message::user(vec![ContentBlock::text(
                 "Write hello world in Rust.",
@@ -450,7 +652,9 @@ mod tests {
                 input_schema: serde_json::json!({"type": "object"}),
             })
             .temperature(0.0)
-            .thinking(ThinkingMode::Enabled);
+            .thinking(ThinkingMode::Enabled)
+            .build()
+            .expect("model id's set");
 
         // Simulate agent loop mutation
         req.message(Message::assistant(vec![

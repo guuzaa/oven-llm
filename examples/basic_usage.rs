@@ -19,8 +19,8 @@ use std::io;
 use std::io::Write;
 
 use oven_llm::{
-    ContentBlock, Delta, Message, ModelId, OpenAICompatProvider, Provider, Request, SamplingParams,
-    StreamEvent, ThinkingMode,
+    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StreamEvent,
+    ThinkingMode,
 };
 use secrecy::SecretString;
 
@@ -102,19 +102,14 @@ async fn main() {
     )));
 
     // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
-    let model_id = ModelId::from("deepseek-v4-flash");
-    let request = Request {
-        model: model_id,
-        messages: vec![Message::user(vec![ContentBlock::text(
+    let mut request = Request::default();
+    request
+        .model("deepseek-v4-flash")
+        .message(Message::user(vec![ContentBlock::text(
             "用一句话介绍一下 Rust 语言。",
-        )])],
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
-        thinking: Some(ThinkingMode::Enabled),
-        ..Default::default()
-    };
+        )]))
+        .temperature(0.0)
+        .thinking(ThinkingMode::Enabled);
 
     provider_example(provider, &request).await
 }

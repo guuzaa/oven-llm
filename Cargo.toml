@@ -2,6 +2,7 @@
 name = "oven-llm"
 version = "0.1.0"
 edition = "2024"
+description = "A Rust library for calling LLM providers with a unified API."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

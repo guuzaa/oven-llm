@@ -66,7 +66,7 @@ async fn main() -> ExampleResult<()> {
         }
 
         let tool_results = execute_requested_tools(&workspace_root, &response.content);
-        request.message(Message::user(tool_results));
+        request.message(Message::tool(tool_results));
     }
 
     Ok(())

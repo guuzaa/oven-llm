@@ -122,6 +122,7 @@ fn encode_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), E
         Role::System => out.push(encode_system_message(message)?),
         Role::User => encode_user_message(message, out)?,
         Role::Assistant => out.push(encode_assistant_message(message)?),
+        Role::Tool => encode_tool_message(message, out)?,
     }
     Ok(())
 }
@@ -243,6 +244,28 @@ fn encode_tool_result(
         tool_call_id: Some(tool_use_id.to_string()),
         ..Default::default()
     })
+}
+
+/// 编码一条 `Role::Tool` 消息：将每个 `ToolResult` 块展开为独立的
+/// `role: "tool"` wire 消息，保持原始顺序。仅允许 `ToolResult` 内容块。
+fn encode_tool_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), EncodeError> {
+    for block in &message.content {
+        match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                out.push(encode_tool_result(tool_use_id, content, *is_error)?);
+            }
+            other => {
+                return Err(EncodeError::InvalidContent(format!(
+                    "Role::Tool message may only contain ToolResult blocks, found {other:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 编码一条 `Role::Assistant` 消息：合并 `Text` 块为 `content`，将
@@ -583,6 +606,41 @@ mod tests {
             is_error: false,
         }]);
         let err = encode_assistant_message(&message).unwrap_err();
+        assert!(matches!(err, EncodeError::InvalidContent(_)));
+    }
+
+    // --- encode_tool_message (Role::Tool) ---
+
+    #[test]
+    fn tool_message_expands_each_tool_result() {
+        let message = Message::tool(vec![
+            ContentBlock::ToolResult {
+                tool_use_id: "call_1".into(),
+                content: vec![ContentBlock::text("result 1")],
+                is_error: false,
+            },
+            ContentBlock::ToolResult {
+                tool_use_id: "call_2".into(),
+                content: vec![ContentBlock::text("result 2")],
+                is_error: true,
+            },
+        ]);
+        let mut out = Vec::new();
+        encode_tool_message(&message, &mut out).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "tool");
+        assert_eq!(out[0].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(out[0].content, Some("result 1".into()));
+        assert_eq!(out[1].role, "tool");
+        assert_eq!(out[1].tool_call_id.as_deref(), Some("call_2"));
+        assert_eq!(out[1].content, Some("Error: result 2".into()));
+    }
+
+    #[test]
+    fn tool_message_non_tool_result_errors() {
+        let message = Message::tool(vec![ContentBlock::text("oops")]);
+        let mut out = Vec::new();
+        let err = encode_tool_message(&message, &mut out).unwrap_err();
         assert!(matches!(err, EncodeError::InvalidContent(_)));
     }
 

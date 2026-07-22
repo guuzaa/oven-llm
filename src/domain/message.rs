@@ -5,9 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 消息角色。仅包含 `User`、`System`、`Assistant` 三种取值，不包含独立的
-/// `Tool` 角色——工具执行结果统一携带在 `Role::User` 消息中的
-/// `ContentBlock::ToolResult` 内容块里。
+/// 消息角色。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -15,6 +13,7 @@ pub enum Role {
     User,
     System,
     Assistant,
+    Tool,
 }
 
 /// 统一内容块 —— 参照 Anthropic 的粒度设计，足以表达任意 provider 的消息内容。
@@ -91,6 +90,14 @@ impl Message {
             content: content.into(),
         }
     }
+
+    /// 便捷构造一条 `Role::Tool` 消息，用于携带工具执行结果。
+    pub fn tool(content: impl Into<Vec<ContentBlock>>) -> Message {
+        Message {
+            role: Role::Tool,
+            content: content.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +117,7 @@ mod tests {
             serde_json::to_string(&Role::Assistant).unwrap(),
             "\"assistant\""
         );
+        assert_eq!(serde_json::to_string(&Role::Tool).unwrap(), "\"tool\"");
     }
 
     #[test]
@@ -250,6 +258,17 @@ mod tests {
     fn message_assistant_constructor() {
         let msg = Message::assistant(vec![ContentBlock::text("hi")]);
         assert_eq!(msg.role, Role::Assistant);
+        assert_eq!(msg.content.len(), 1);
+    }
+
+    #[test]
+    fn message_tool_constructor() {
+        let msg = Message::tool(vec![ContentBlock::ToolResult {
+            tool_use_id: "t1".into(),
+            content: vec![ContentBlock::text("ok")],
+            is_error: false,
+        }]);
+        assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.content.len(), 1);
     }
 

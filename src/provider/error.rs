@@ -5,6 +5,13 @@
 
 use thiserror::Error;
 
+use crate::domain::StreamCollectorError;
+use crate::provider::openai_compat::{DecodeError, EncodeError};
+use crate::provider::validate::ValidationError;
+
+/// `Provider` 方法的便捷 Result 别名。
+pub type Result<T> = std::result::Result<T, ProviderError>;
+
 /// 所有 `Provider` 方法（`complete` / `stream` / `list_models`）共用的错误类型。
 #[derive(Debug, Error)]
 pub enum ProviderError {
@@ -17,31 +24,51 @@ pub enum ProviderError {
     /// HTTP 429。
     #[error("rate limited, retry after {retry_after_ms:?}ms")]
     RateLimit { retry_after_ms: Option<u64> },
-    /// JSON 反序列化失败 / `DecodeError` 包装。
-    #[error("decode error: {0}")]
-    Decode(String),
+    /// JSON 反序列化失败 / wire 响应解码错误。
+    #[error("decode error")]
+    Decode(#[source] DecodeError),
     /// SSE 解析失败 / 流在 `[DONE]` 前终止。
-    #[error("stream protocol error: {0}")]
-    Stream(String),
+    #[error("stream protocol error")]
+    Stream(#[source] StreamCollectorError),
     /// 其他非 2xx 状态码，携带状态码与响应体。
     #[error("api error ({status}): {body}")]
     Api { status: u16, body: String },
-    /// 请求发出前的编码失败（例如 `encode_request` 返回 `EncodeError`）。
-    #[error("invalid request: {0}")]
-    InvalidRequest(String),
+    /// 请求发出前的校验失败。
+    #[error("invalid request")]
+    InvalidRequest(#[source] ValidationError),
+    /// 请求编码为 wire 格式失败。
+    #[error("encoding error")]
+    Encode(#[source] EncodeError),
 }
 
-impl From<crate::domain::StreamCollectorError> for ProviderError {
-    fn from(err: crate::domain::StreamCollectorError) -> Self {
-        match err {
-            crate::domain::StreamCollectorError::Stream(msg) => ProviderError::Stream(msg),
-        }
+impl From<StreamCollectorError> for ProviderError {
+    fn from(err: StreamCollectorError) -> Self {
+        ProviderError::Stream(err)
+    }
+}
+
+impl From<DecodeError> for ProviderError {
+    fn from(err: DecodeError) -> Self {
+        ProviderError::Decode(err)
+    }
+}
+
+impl From<EncodeError> for ProviderError {
+    fn from(err: EncodeError) -> Self {
+        ProviderError::Encode(err)
+    }
+}
+
+impl From<ValidationError> for ProviderError {
+    fn from(err: ValidationError) -> Self {
+        ProviderError::InvalidRequest(err)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn auth_error_displays_message() {
@@ -75,23 +102,52 @@ mod tests {
     }
 
     #[test]
-    fn decode_error_displays_message() {
-        let err = ProviderError::Decode("unexpected field".to_string());
-        assert_eq!(err.to_string(), "decode error: unexpected field");
+    fn decode_error_display() {
+        let inner = DecodeError::MissingChoice;
+        let err = ProviderError::Decode(inner);
+        assert_eq!(err.to_string(), "decode error");
+        assert!(err.source().is_some());
     }
 
     #[test]
-    fn stream_error_displays_message() {
-        let err = ProviderError::Stream("stream ended before [DONE]".to_string());
-        assert_eq!(
-            err.to_string(),
-            "stream protocol error: stream ended before [DONE]"
+    fn stream_error_display() {
+        let inner = StreamCollectorError::Stream("stream ended before [DONE]".to_string());
+        let err = ProviderError::Stream(inner);
+        assert_eq!(err.to_string(), "stream protocol error");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn invalid_request_display() {
+        let inner = ValidationError::ToolsUnsupported;
+        let err = ProviderError::InvalidRequest(inner);
+        assert_eq!(err.to_string(), "invalid request");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn encode_error_display() {
+        let inner = EncodeError::InvalidContent("bad".to_string());
+        let err = ProviderError::Encode(inner);
+        assert_eq!(err.to_string(), "encoding error");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn error_chain_preserves_source() {
+        let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let decode_inner = DecodeError::InvalidToolArguments {
+            id: "call_1".to_string(),
+            source: json_err,
+        };
+        let err = ProviderError::Decode(decode_inner);
+
+        assert_eq!(err.to_string(), "decode error");
+        let source = err.source().unwrap();
+        assert!(
+            source
+                .to_string()
+                .contains("invalid tool arguments JSON for tool call call_1")
         );
-    }
-
-    #[test]
-    fn invalid_request_error_displays_message() {
-        let err = ProviderError::InvalidRequest("missing model".to_string());
-        assert_eq!(err.to_string(), "invalid request: missing model");
     }
 }

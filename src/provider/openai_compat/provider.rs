@@ -170,11 +170,11 @@ impl OpenAICompatProvider {
     /// `encoder` 不读取/处理 `provider_options`（Requirement 7.2）；当
     /// `provider_options` 为空时不会产生任何额外字段（Requirement 7.3）。
     fn build_body(&self, req: &Request, stream: bool) -> Result<serde_json::Value, ProviderError> {
-        let wire = encoder::encode_request(req, stream)
-            .map_err(|err| ProviderError::InvalidRequest(err.to_string()))?;
+        let wire = encoder::encode_request(req, stream)?;
 
-        let mut body = serde_json::to_value(wire)
-            .map_err(|err| ProviderError::InvalidRequest(err.to_string()))?;
+        let mut body = serde_json::to_value(wire).map_err(|err| {
+            ProviderError::Encode(super::encoder::EncodeError::InvalidContent(err.to_string()))
+        })?;
 
         if !req.provider_options.is_empty() {
             let object = body
@@ -192,8 +192,7 @@ impl OpenAICompatProvider {
     /// 交由上游服务决定其可用性与能力约束。
     fn validate_known_model(&self, req: &Request, stream: bool) -> Result<(), ProviderError> {
         if let Some(model) = self.resolve_model(&req.model) {
-            validate_request(req, model, stream)
-                .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
+            validate_request(req, model, stream)?;
         }
         Ok(())
     }
@@ -248,12 +247,9 @@ impl Provider for OpenAICompatProvider {
         let body = self.build_body(req, false)?;
         let response = self.post_chat_completions(&body).await?;
 
-        let wire: ChatCompletionResponse = response
-            .json()
-            .await
-            .map_err(|err| ProviderError::Decode(err.to_string()))?;
+        let wire: ChatCompletionResponse = response.json().await?;
 
-        decoder::decode_response(wire).map_err(|err| ProviderError::Decode(err.to_string()))
+        decoder::decode_response(wire).map_err(ProviderError::from)
     }
 
     /// 发送一次流式请求（Requirement 6.2：强制 `stream = true`），基于
@@ -278,7 +274,9 @@ impl Provider for OpenAICompatProvider {
                 let event = match event {
                     Ok(event) => event,
                     Err(err) => {
-                        yield Err(ProviderError::Stream(err.to_string()));
+                        yield Err(ProviderError::Stream(
+                            crate::domain::StreamCollectorError::Stream(err.to_string()),
+                        ));
                         return;
                     }
                 };
@@ -291,7 +289,7 @@ impl Provider for OpenAICompatProvider {
                             }
                         }
                         Err(err) => {
-                            yield Err(ProviderError::Decode(err.to_string()));
+                            yield Err(ProviderError::Decode(err));
                         }
                     }
                     return;
@@ -300,7 +298,7 @@ impl Provider for OpenAICompatProvider {
                 let chunk: ChatCompletionChunk = match serde_json::from_str(&event.data) {
                     Ok(chunk) => chunk,
                     Err(err) => {
-                        yield Err(ProviderError::Decode(err.to_string()));
+                        yield Err(ProviderError::Decode(super::decoder::DecodeError::Json(err)));
                         return;
                     }
                 };
@@ -312,7 +310,7 @@ impl Provider for OpenAICompatProvider {
                         }
                     }
                     Err(err) => {
-                        yield Err(ProviderError::Decode(err.to_string()));
+                        yield Err(ProviderError::Decode(err));
                         return;
                     }
                 }
@@ -321,7 +319,9 @@ impl Provider for OpenAICompatProvider {
             // The loop only exits normally (without an early `return`) when the
             // underlying SSE stream ended without ever seeing `[DONE]`.
             yield Err(ProviderError::Stream(
-                "stream ended before [DONE]".to_string(),
+                crate::domain::StreamCollectorError::Stream(
+                    "stream ended before [DONE]".to_string(),
+                ),
             ));
         };
 
@@ -354,10 +354,7 @@ impl Provider for OpenAICompatProvider {
 
         let response = self.check_status(response).await?;
 
-        let body: ModelsListResponse = response
-            .json()
-            .await
-            .map_err(|err| ProviderError::Decode(err.to_string()))?;
+        let body: ModelsListResponse = response.json().await?;
 
         Ok(body
             .data
@@ -784,9 +781,7 @@ mod tests {
     #[tokio::test]
     async fn stream_yields_error_when_connection_ends_before_done() {
         let mock_server = MockServer::start().await;
-        let sse_body = concat!(
-            "data: {\"id\":\"chatcmpl-1\",\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
-        );
+        let sse_body = "data: {\"id\":\"chatcmpl-1\",\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n";
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .respond_with(
@@ -810,8 +805,11 @@ mod tests {
 
         let last = events.last().unwrap();
         match last {
-            Err(ProviderError::Stream(msg)) => {
-                assert_eq!(msg, "stream ended before [DONE]");
+            Err(ProviderError::Stream(err)) => {
+                assert_eq!(
+                    err.to_string(),
+                    "stream protocol error: stream ended before [DONE]"
+                );
             }
             other => panic!("expected Stream error, got {other:?}"),
         }

@@ -25,7 +25,7 @@ use crate::domain::stream::{Delta, StreamEvent};
 
 /// `decode_response`（及后续流式 `StreamDecoder`）的解码失败原因。
 #[derive(Debug, Error)]
-pub(crate) enum DecodeError {
+pub enum DecodeError {
     /// wire 响应的 `choices` 字段为空（Requirement 4.1）。
     #[error("response has no choices")]
     MissingChoice,
@@ -43,6 +43,9 @@ pub(crate) enum DecodeError {
         #[source]
         source: serde_json::Error,
     },
+    /// 通用 JSON 反序列化错误（例如 SSE chunk 解析失败）。
+    #[error("JSON deserialization error")]
+    Json(#[source] serde_json::Error),
     /// 流式状态机在 `AwaitingDone` 之后收到了包含非空 `choices` 的 chunk
     /// （Requirement 5.5）。
     #[error("received data after finish_reason")]

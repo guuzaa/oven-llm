@@ -64,7 +64,7 @@ pub enum StreamCollectorError {
 ///
 /// ```rust
 /// # use oven_llm::*;
-/// # fn example(stream: impl futures::Stream<Item = Result<StreamEvent, ProviderError>>) {
+/// # fn example(stream: impl futures::Stream<Item = std::result::Result<StreamEvent, ProviderError>>) {
 /// # futures::executor::block_on(async {
 /// use futures::StreamExt;
 /// let mut collector = StreamCollector::new();

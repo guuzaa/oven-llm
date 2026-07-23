@@ -25,7 +25,7 @@ use crate::domain::tool::{Tool, ToolChoice};
 
 /// `encode_request` 及其子函数的编码失败原因。
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
-pub(crate) enum EncodeError {
+pub enum EncodeError {
     /// 消息角色与内容块组合不受支持（例如 `Role::System` 消息中出现非
     /// `Text` 块，或 `Role::User` 消息中出现 `ToolUse` 块）。
     #[error("invalid content block: {0}")]

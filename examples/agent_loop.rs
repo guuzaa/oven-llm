@@ -45,7 +45,8 @@ async fn main() -> ExampleResult<()> {
         ))
         .message(Message::user(vec![ContentBlock::text(task)]))
         .tools(coding_tools())
-        .temperature(0.0)
+        .temperature(0.1)
+        .thinking(oven_llm::ThinkingMode::Enabled)
         .build()
         .expect("model is set");
 

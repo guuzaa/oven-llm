@@ -78,7 +78,7 @@ mod tests {
     fn model(id: &str, provider: ProviderName) -> ModelInfo {
         ModelInfo {
             id: id.to_string(),
-            provider: provider,
+            provider,
             context_window: 1000,
             max_output_tokens: 100,
             capabilities: ModelCapabilities::default(),

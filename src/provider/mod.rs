@@ -6,7 +6,7 @@ pub mod openai_compat;
 pub mod registry;
 pub mod validate;
 
-pub use error::ProviderError;
+pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
 pub use openai_compat::{
     OpenAICompatProvider, all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models,
@@ -24,13 +24,10 @@ use crate::domain::{ModelId, Request, Response, StreamEvent};
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// 发送一次非流式请求，返回完整响应。
-    async fn complete(&self, req: &Request) -> Result<Response, ProviderError>;
+    async fn complete(&self, req: &Request) -> Result<Response>;
 
     /// 发送一次流式请求，返回统一的 `StreamEvent` 流。
-    async fn stream(
-        &self,
-        req: &Request,
-    ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError>;
+    async fn stream(&self, req: &Request) -> Result<BoxStream<'static, Result<StreamEvent>>>;
 
     /// 该 provider 静态已知的模型列表，默认空，由具体实现覆写。
     fn known_models(&self) -> Vec<ModelInfo> {
@@ -41,7 +38,7 @@ pub trait Provider: Send + Sync {
     fn resolve_model(&self, id: &ModelId) -> Option<&ModelInfo>;
 
     /// 从 provider 的 `/models` 端点动态获取模型列表（能力字段通常不可用）。
-    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         Ok(vec![])
     }
 
@@ -69,7 +66,7 @@ mod tests {
 
     #[async_trait]
     impl Provider for StubProvider {
-        async fn complete(&self, _req: &Request) -> Result<Response, ProviderError> {
+        async fn complete(&self, _req: &Request) -> Result<Response> {
             unimplemented!("not needed for this test")
         }
 
@@ -77,10 +74,7 @@ mod tests {
             None
         }
 
-        async fn stream(
-            &self,
-            _req: &Request,
-        ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
+        async fn stream(&self, _req: &Request) -> Result<BoxStream<'static, Result<StreamEvent>>> {
             unimplemented!("not needed for this test")
         }
 

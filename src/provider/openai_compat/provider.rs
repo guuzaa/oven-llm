@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn known_models_returns_configured_list() {
-        let models = deepseek_models();
+        let mut models = deepseek_models();
         let provider = OpenAICompatProvider::with_models(
             "https://example.com",
             ProviderName::DeepSeek,
@@ -684,7 +684,10 @@ mod tests {
             models.clone(),
             HeaderMap::new(),
         );
-        assert_eq!(provider.known_models(), models.as_slice());
+        let mut got = provider.known_models();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        got.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(got, models);
     }
 
     // --- list_models (Requirement 6.6) ---

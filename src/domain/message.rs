@@ -75,12 +75,25 @@ pub struct Message {
 }
 
 impl Message {
+    /// 便捷构造一条 `Role::System` 文本消息。
+    pub fn system(text: impl Into<String>) -> Message {
+        Message {
+            role: Role::System,
+            content: vec![ContentBlock::text(text)],
+        }
+    }
+
     /// 便捷构造一条 `Role::User` 消息。
     pub fn user(content: impl Into<Vec<ContentBlock>>) -> Message {
         Message {
             role: Role::User,
             content: content.into(),
         }
+    }
+
+    /// 便捷构造一条仅含文本的 `Role::User` 消息。
+    pub fn user_text(text: impl Into<String>) -> Message {
+        Message::user(vec![ContentBlock::text(text)])
     }
 
     /// 便捷构造一条 `Role::Assistant` 消息。
@@ -91,12 +104,26 @@ impl Message {
         }
     }
 
+    /// 便捷构造一条仅含文本的 `Role::Assistant` 消息。
+    pub fn assistant_text(text: impl Into<String>) -> Message {
+        Message::assistant(vec![ContentBlock::text(text)])
+    }
+
     /// 便捷构造一条 `Role::Tool` 消息，用于携带工具执行结果。
     pub fn tool(content: impl Into<Vec<ContentBlock>>) -> Message {
         Message {
             role: Role::Tool,
             content: content.into(),
         }
+    }
+
+    /// 便捷构造一条仅含单个文本工具结果的 `Role::Tool` 消息。
+    pub fn tool_result(id: impl Into<String>, text: impl Into<String>, is_error: bool) -> Message {
+        Message::tool(vec![ContentBlock::ToolResult {
+            tool_use_id: id.into(),
+            content: vec![ContentBlock::text(text)],
+            is_error,
+        }])
     }
 }
 
@@ -248,6 +275,16 @@ mod tests {
     }
 
     #[test]
+    fn message_system_constructor() {
+        let msg = Message::system("be helpful");
+        assert_eq!(msg.role, Role::System);
+        match &msg.content[..] {
+            [ContentBlock::Text { text }] => assert_eq!(text, "be helpful"),
+            _ => panic!("expected single text block"),
+        }
+    }
+
+    #[test]
     fn message_user_constructor() {
         let msg = Message::user(vec![ContentBlock::text("hi")]);
         assert_eq!(msg.role, Role::User);
@@ -255,10 +292,30 @@ mod tests {
     }
 
     #[test]
+    fn message_user_text_constructor() {
+        let msg = Message::user_text("hi");
+        assert_eq!(msg.role, Role::User);
+        match &msg.content[..] {
+            [ContentBlock::Text { text }] => assert_eq!(text, "hi"),
+            _ => panic!("expected single text block"),
+        }
+    }
+
+    #[test]
     fn message_assistant_constructor() {
         let msg = Message::assistant(vec![ContentBlock::text("hi")]);
         assert_eq!(msg.role, Role::Assistant);
         assert_eq!(msg.content.len(), 1);
+    }
+
+    #[test]
+    fn message_assistant_text_constructor() {
+        let msg = Message::assistant_text("hi");
+        assert_eq!(msg.role, Role::Assistant);
+        match &msg.content[..] {
+            [ContentBlock::Text { text }] => assert_eq!(text, "hi"),
+            _ => panic!("expected single text block"),
+        }
     }
 
     #[test]
@@ -270,6 +327,29 @@ mod tests {
         }]);
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.content.len(), 1);
+    }
+
+    #[test]
+    fn message_tool_result_constructor() {
+        let msg = Message::tool_result("t1", "ok", false);
+        assert_eq!(msg.role, Role::Tool);
+        match &msg.content[..] {
+            [
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                },
+            ] => {
+                assert_eq!(tool_use_id, "t1");
+                assert!(!is_error);
+                match &content[..] {
+                    [ContentBlock::Text { text }] => assert_eq!(text, "ok"),
+                    _ => panic!("expected single text content"),
+                }
+            }
+            _ => panic!("expected single ToolResult block"),
+        }
     }
 
     #[test]

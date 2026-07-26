@@ -43,7 +43,7 @@ async fn main() -> ExampleResult<()> {
              Make the requested change, then give a concise final summary.",
             workspace_root.display()
         ))
-        .message(Message::user(vec![ContentBlock::text(task)]))
+        .message(Message::user_text(task))
         .tools(coding_tools())
         .temperature(0.1)
         .thinking(oven_llm::ThinkingMode::Enabled)
@@ -52,11 +52,8 @@ async fn main() -> ExampleResult<()> {
 
     loop {
         let response = collect_streamed_response(&provider, &request).await?;
-        let requests_tools = response.stop_reason == Some(StopReason::ToolUse)
-            && response
-                .content
-                .iter()
-                .any(|block| matches!(block, ContentBlock::ToolUse { .. }));
+        let requests_tools =
+            response.stop_reason == Some(StopReason::ToolUse) && response.has_tool_use();
 
         // 关键顺序：先提交完整的 assistant 消息（含 tool_use），再执行工具并追加结果。
         // OpenAI 兼容接口要求 role=tool 紧跟在发起该调用的 assistant 消息之后。
@@ -66,8 +63,14 @@ async fn main() -> ExampleResult<()> {
             break;
         }
 
-        let tool_results = execute_requested_tools(&workspace_root, &response.content);
-        request.message(Message::tool(tool_results));
+        for block in response.tool_uses() {
+            let ContentBlock::ToolUse { id, name, input } = block else {
+                continue;
+            };
+            println!("tool: {name}({input})");
+            let (output, is_error) = execute_tool(&workspace_root, name, input);
+            request.message(Message::tool_result(id, output, is_error));
+        }
     }
 
     Ok(())
@@ -140,26 +143,6 @@ fn coding_tools() -> Vec<Tool> {
             }),
         },
     ]
-}
-
-/// 在一轮中执行所有工具调用，并将结果合并成一条 user 消息的内容块。
-fn execute_requested_tools(workspace_root: &Path, content: &[ContentBlock]) -> Vec<ContentBlock> {
-    content
-        .iter()
-        .filter_map(|block| {
-            let ContentBlock::ToolUse { id, name, input } = block else {
-                return None;
-            };
-
-            println!("tool: {name}({input})");
-            let (output, is_error) = execute_tool(workspace_root, name, input);
-            Some(ContentBlock::ToolResult {
-                tool_use_id: id.clone(),
-                content: vec![ContentBlock::text(output)],
-                is_error,
-            })
-        })
-        .collect()
 }
 
 fn execute_tool(workspace_root: &Path, name: &str, input: &Value) -> (String, bool) {

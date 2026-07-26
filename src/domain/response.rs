@@ -3,6 +3,8 @@
 //! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
 //! "Usage / StopReason / Response（`domain/response.rs`）" 一节。
 
+use std::ops::{Add, AddAssign};
+
 use serde::{Deserialize, Serialize};
 
 use super::message::{ContentBlock, Role};
@@ -20,6 +22,25 @@ pub struct Usage {
 
 fn is_zero(v: &u32) -> bool {
     *v == 0
+}
+
+impl Add for Usage {
+    type Output = Usage;
+
+    fn add(self, rhs: Usage) -> Usage {
+        Usage {
+            input_tokens: self.input_tokens.saturating_add(rhs.input_tokens),
+            output_tokens: self.output_tokens.saturating_add(rhs.output_tokens),
+            cache_read_tokens: self.cache_read_tokens.saturating_add(rhs.cache_read_tokens),
+            reasoning_tokens: self.reasoning_tokens.saturating_add(rhs.reasoning_tokens),
+        }
+    }
+}
+
+impl AddAssign for Usage {
+    fn add_assign(&mut self, rhs: Usage) {
+        *self = *self + rhs;
+    }
 }
 
 /// 响应终止原因，与具体 provider 无关。
@@ -45,6 +66,42 @@ pub struct Response {
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<StopReason>,
     pub usage: Option<Usage>,
+}
+
+impl Response {
+    /// 按出现顺序拼接所有 `Text` 内容块。
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 按出现顺序拼接所有 `Thinking` 内容块。
+    pub fn thinking(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Thinking { thinking } => Some(thinking.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 迭代响应中的所有 `ToolUse` 内容块。
+    pub fn tool_uses(&self) -> impl Iterator<Item = &ContentBlock> + '_ {
+        self.content
+            .iter()
+            .filter(|block| matches!(block, ContentBlock::ToolUse { .. }))
+    }
+
+    /// 响应是否包含至少一个 `ToolUse` 内容块。
+    pub fn has_tool_use(&self) -> bool {
+        self.tool_uses().next().is_some()
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +154,82 @@ mod tests {
         };
         let json = serde_json::to_value(usage).unwrap();
         assert_eq!(json["reasoning_tokens"], 8);
+    }
+
+    #[test]
+    fn usage_add_sums_all_fields() {
+        let a = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 3,
+            reasoning_tokens: 4,
+        };
+        let b = Usage {
+            input_tokens: 5,
+            output_tokens: 7,
+            cache_read_tokens: 1,
+            reasoning_tokens: 2,
+        };
+        assert_eq!(
+            a + b,
+            Usage {
+                input_tokens: 15,
+                output_tokens: 27,
+                cache_read_tokens: 4,
+                reasoning_tokens: 6,
+            }
+        );
+    }
+
+    #[test]
+    fn usage_add_assign_accumulates() {
+        let mut total = Usage::default();
+        total += Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_read_tokens: 3,
+            reasoning_tokens: 4,
+        };
+        total += Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            reasoning_tokens: 40,
+        };
+        assert_eq!(
+            total,
+            Usage {
+                input_tokens: 11,
+                output_tokens: 22,
+                cache_read_tokens: 33,
+                reasoning_tokens: 44,
+            }
+        );
+    }
+
+    #[test]
+    fn usage_add_saturates_on_overflow() {
+        let a = Usage {
+            input_tokens: u32::MAX,
+            output_tokens: u32::MAX - 1,
+            cache_read_tokens: u32::MAX,
+            reasoning_tokens: 0,
+        };
+        let b = Usage {
+            input_tokens: 1,
+            output_tokens: 5,
+            cache_read_tokens: 0,
+            reasoning_tokens: u32::MAX,
+        };
+        assert_eq!(
+            a + b,
+            Usage {
+                input_tokens: u32::MAX,
+                output_tokens: u32::MAX,
+                cache_read_tokens: u32::MAX,
+                reasoning_tokens: u32::MAX,
+            }
+        );
     }
 
     #[test]
@@ -195,5 +328,105 @@ mod tests {
         assert_eq!(decoded.role, response.role);
         assert_eq!(decoded.stop_reason, response.stop_reason);
         assert_eq!(decoded.usage, response.usage);
+    }
+
+    fn sample_response(content: Vec<ContentBlock>) -> Response {
+        Response {
+            id: "msg".into(),
+            model: "m".into(),
+            role: Role::Assistant,
+            content,
+            stop_reason: None,
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn response_text_concatenates_text_blocks_in_order() {
+        let response = sample_response(vec![
+            ContentBlock::thinking("skip"),
+            ContentBlock::text("Hello"),
+            ContentBlock::text(" "),
+            ContentBlock::text("world"),
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "f".into(),
+                input: serde_json::json!({}),
+            },
+        ]);
+        assert_eq!(response.text(), "Hello world");
+    }
+
+    #[test]
+    fn response_text_empty_when_no_text_blocks() {
+        let response = sample_response(vec![ContentBlock::thinking("only thinking")]);
+        assert_eq!(response.text(), "");
+    }
+
+    #[test]
+    fn response_thinking_concatenates_thinking_blocks_in_order() {
+        let response = sample_response(vec![
+            ContentBlock::thinking("let me "),
+            ContentBlock::text("ignore"),
+            ContentBlock::thinking("think"),
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "f".into(),
+                input: serde_json::json!({}),
+            },
+        ]);
+        assert_eq!(response.thinking(), "let me think");
+    }
+
+    #[test]
+    fn response_thinking_empty_when_no_thinking_blocks() {
+        let response = sample_response(vec![ContentBlock::text("hi")]);
+        assert_eq!(response.thinking(), "");
+    }
+
+    #[test]
+    fn response_tool_uses_iterates_only_tool_use_blocks() {
+        let response = sample_response(vec![
+            ContentBlock::text("hi"),
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "a".into(),
+                input: serde_json::json!({"x": 1}),
+            },
+            ContentBlock::thinking("..."),
+            ContentBlock::ToolUse {
+                id: "t2".into(),
+                name: "b".into(),
+                input: serde_json::json!({"y": 2}),
+            },
+        ]);
+        let uses: Vec<_> = response.tool_uses().collect();
+        assert_eq!(uses.len(), 2);
+        match uses[0] {
+            ContentBlock::ToolUse { id, name, .. } => {
+                assert_eq!(id, "t1");
+                assert_eq!(name, "a");
+            }
+            _ => panic!("expected ToolUse"),
+        }
+        match uses[1] {
+            ContentBlock::ToolUse { id, name, .. } => {
+                assert_eq!(id, "t2");
+                assert_eq!(name, "b");
+            }
+            _ => panic!("expected ToolUse"),
+        }
+    }
+
+    #[test]
+    fn response_has_tool_use() {
+        let with = sample_response(vec![ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "f".into(),
+            input: serde_json::json!({}),
+        }]);
+        let without = sample_response(vec![ContentBlock::text("hi")]);
+        assert!(with.has_tool_use());
+        assert!(!without.has_tool_use());
     }
 }

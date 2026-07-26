@@ -19,8 +19,7 @@ use std::io;
 use std::io::Write;
 
 use oven_llm::{
-    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StreamEvent,
-    ThinkingMode,
+    Delta, Message, OpenAICompatProvider, Provider, Request, StreamEvent, ThinkingMode,
 };
 use secrecy::SecretString;
 
@@ -43,16 +42,13 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
                 "complete() succeeded: id={} stop_reason={:?}",
                 response.id, response.stop_reason
             );
-            for block in &response.content {
-                match block {
-                    ContentBlock::Thinking { thinking } => {
-                        println!("  \x1b[90mthinking: {thinking}\x1b[0m");
-                    }
-                    ContentBlock::Text { text } => {
-                        println!("  text: {text}");
-                    }
-                    _ => {}
-                }
+            let thinking = response.thinking();
+            if !thinking.is_empty() {
+                println!("  \x1b[90mthinking: {thinking}\x1b[0m");
+            }
+            let text = response.text();
+            if !text.is_empty() {
+                println!("  text: {text}");
             }
         }
         Err(err) => eprintln!("complete() failed (expected without a real API key): {err}"),
@@ -104,9 +100,7 @@ async fn main() {
     // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
     let request = Request::builder()
         .model("deepseek-v4-flash")
-        .message(Message::user(vec![ContentBlock::text(
-            "用一句话介绍一下 Rust 语言。",
-        )]))
+        .message(Message::user_text("用一句话介绍一下 Rust 语言。"))
         .temperature(0.0)
         .thinking(ThinkingMode::Enabled)
         .build()

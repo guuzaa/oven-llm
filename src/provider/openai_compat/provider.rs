@@ -48,8 +48,39 @@ pub struct OpenAICompatProvider {
 }
 
 impl OpenAICompatProvider {
-    /// 构造一个不带静态模型元数据、不带额外请求头的 provider。
-    pub fn new(
+    /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的
+    /// `base_url` 与模型元数据；对 `Custom` 或尚不支持的服务商，请改用
+    /// [`with_base_url`] 或 [`with_models`]。
+    pub fn new(provider_name: ProviderName, api_key: SecretString) -> Self {
+        match &provider_name {
+            ProviderName::OpenAI => Self::openai(api_key),
+            ProviderName::DeepSeek => Self::deepseek(api_key),
+            ProviderName::Moonshot => Self::moonshot(api_key),
+            ProviderName::Zhipu => Self::zhipu(api_key),
+            ProviderName::Anthropic => {
+                panic!(
+                    "Anthropic ({provider_name:?}) does not provide an OpenAI-compatible API; \
+                     use the Anthropic-specific provider instead of OpenAICompatProvider"
+                )
+            }
+            ProviderName::Grok => {
+                panic!(
+                    "Grok ({provider_name:?}) has no preset yet; \
+                     use OpenAICompatProvider::with_base_url or ::with_models instead"
+                )
+            }
+            ProviderName::Custom(name) => {
+                panic!(
+                    "cannot dispatch to custom provider '{name}'; \
+                     use OpenAICompatProvider::with_base_url or ::with_models instead"
+                )
+            }
+        }
+    }
+
+    /// 构造一个不带静态模型元数据、不带额外请求头的 provider（显式指定
+    /// `base_url`，可用于 `Custom` 服务商）。
+    pub fn with_base_url(
         base_url: impl Into<String>,
         provider_name: ProviderName,
         api_key: SecretString,
@@ -401,7 +432,7 @@ mod tests {
 
     #[test]
     fn new_sets_base_url_and_provider_name() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -446,11 +477,62 @@ mod tests {
         assert!(provider.known_models().is_empty());
     }
 
+    // --- ProviderName dispatch (new) ---
+
+    #[test]
+    fn new_dispatches_openai() {
+        let provider = OpenAICompatProvider::new(ProviderName::OpenAI, api_key("k"));
+        assert_eq!(provider.base_url, "https://api.openai.com/v1");
+        assert_eq!(provider.provider_name, ProviderName::OpenAI);
+    }
+
+    #[test]
+    fn new_dispatches_deepseek() {
+        let provider = OpenAICompatProvider::new(ProviderName::DeepSeek, api_key("k"));
+        assert_eq!(provider.base_url, "https://api.deepseek.com");
+        assert_eq!(provider.provider_name, ProviderName::DeepSeek);
+        assert_eq!(provider.known_models().len(), deepseek_models().len());
+    }
+
+    #[test]
+    fn new_dispatches_moonshot() {
+        let provider = OpenAICompatProvider::new(ProviderName::Moonshot, api_key("k"));
+        assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
+        assert_eq!(provider.provider_name, ProviderName::Moonshot);
+        assert_eq!(provider.known_models().len(), moonshot_models().len());
+    }
+
+    #[test]
+    fn new_dispatches_zhipu() {
+        let provider = OpenAICompatProvider::new(ProviderName::Zhipu, api_key("k"));
+        assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
+        assert_eq!(provider.provider_name, ProviderName::Zhipu);
+        assert_eq!(provider.known_models().len(), zhipu_models().len());
+    }
+
+    #[test]
+    #[should_panic(expected = "Anthropic")]
+    fn new_panics_on_anthropic() {
+        let _ = OpenAICompatProvider::new(ProviderName::Anthropic, api_key("k"));
+    }
+
+    #[test]
+    #[should_panic(expected = "has no preset")]
+    fn new_panics_on_grok() {
+        let _ = OpenAICompatProvider::new(ProviderName::Grok, api_key("k"));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot dispatch")]
+    fn new_panics_on_custom() {
+        let _ = OpenAICompatProvider::new(ProviderName::Custom("example".into()), api_key("k"));
+    }
+
     // --- build_headers ---
 
     #[test]
     fn build_headers_includes_authorization_and_content_type() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("secret-token"),
@@ -482,7 +564,7 @@ mod tests {
 
     #[test]
     fn endpoint_joins_base_url_without_trailing_slash() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -495,7 +577,7 @@ mod tests {
 
     #[test]
     fn endpoint_handles_trailing_and_leading_slashes() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com/",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -510,7 +592,7 @@ mod tests {
 
     #[test]
     fn build_body_with_empty_provider_options_has_no_extra_fields() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -524,7 +606,7 @@ mod tests {
 
     #[test]
     fn build_body_merges_provider_options() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -537,7 +619,7 @@ mod tests {
 
     #[test]
     fn build_body_provider_options_override_standard_field() {
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -561,7 +643,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -582,7 +664,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -600,7 +682,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -621,7 +703,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -656,7 +738,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -706,7 +788,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -731,7 +813,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -760,7 +842,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -795,7 +877,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -832,7 +914,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::new(
+        let provider = OpenAICompatProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),

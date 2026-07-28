@@ -9,13 +9,13 @@
 //!
 //! 运行：
 //! ```sh
-//! DEEPSEEK_API_KEY=sk-xxx cargo run --example basic_usage
+//! ZHIPU_API_KEY=sk-xxx cargo run --example basic_usage
 //! ```
-//! 未设置 `DEEPSEEK_API_KEY` 时会使用一个占位 key，网络调用会失败——
+//! 未设置 `ZHIPU_API_KEY` 时会使用一个占位 key，网络调用会失败——
 //! 本示例会打印错误并继续，而不会 panic，因此即使没有真实 API key/网络也能
 //! 演示完整的调用流程。
 
-use std::io;
+use std::{io, time::Duration};
 use std::io::Write;
 
 use oven_llm::{
@@ -54,6 +54,7 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
         Err(err) => eprintln!("complete() failed (expected without a real API key): {err}"),
     }
 
+    std::thread::sleep(Duration::from_secs(1));
     // 5. 演示流式 stream 调用，逐块打印 Delta::TextDelta 内容。
     match provider.stream(request).await {
         Ok(mut event_stream) => {
@@ -92,14 +93,14 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
 async fn main() {
     // 1. 创建 DeepSeek provider（从环境变量读取 API key，未设置时使用占位值）。
     let api_key =
-        std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = Box::new(OpenAICompatProvider::deepseek(SecretString::new(
+        std::env::var("ZHIPU_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
+    let provider = Box::new(OpenAICompatProvider::zhipu(SecretString::new(
         api_key.into(),
     )));
 
     // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
     let request = Request::builder()
-        .model("deepseek-v4-flash")
+        .model("glm-4.5-air")
         .message(Message::user_text("用一句话介绍一下 Rust 语言。"))
         .temperature(0.0)
         .thinking(ThinkingMode::Enabled)

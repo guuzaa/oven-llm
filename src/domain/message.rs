@@ -125,6 +125,23 @@ impl Message {
             is_error,
         }])
     }
+
+    /// Constructs system prompt from this `Message` only when its role is `Role::System`. 
+    /// Otherwise, it returns `None`
+    pub fn system_prompt(&self) -> Option<String> {
+        match self.role {
+            Role::System => Some(
+                self.content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +295,7 @@ mod tests {
     fn message_system_constructor() {
         let msg = Message::system("be helpful");
         assert_eq!(msg.role, Role::System);
+        assert_eq!(msg.system_prompt(), Some("be helpful".into()));
         match &msg.content[..] {
             [ContentBlock::Text { text }] => assert_eq!(text, "be helpful"),
             _ => panic!("expected single text block"),
@@ -289,12 +307,14 @@ mod tests {
         let msg = Message::user(vec![ContentBlock::text("hi")]);
         assert_eq!(msg.role, Role::User);
         assert_eq!(msg.content.len(), 1);
+        assert!(msg.system_prompt().is_none());
     }
 
     #[test]
     fn message_user_text_constructor() {
         let msg = Message::user_text("hi");
         assert_eq!(msg.role, Role::User);
+        assert!(msg.system_prompt().is_none());
         match &msg.content[..] {
             [ContentBlock::Text { text }] => assert_eq!(text, "hi"),
             _ => panic!("expected single text block"),
@@ -306,6 +326,7 @@ mod tests {
         let msg = Message::assistant(vec![ContentBlock::text("hi")]);
         assert_eq!(msg.role, Role::Assistant);
         assert_eq!(msg.content.len(), 1);
+        assert!(msg.system_prompt().is_none());
     }
 
     #[test]
@@ -316,6 +337,7 @@ mod tests {
             [ContentBlock::Text { text }] => assert_eq!(text, "hi"),
             _ => panic!("expected single text block"),
         }
+        assert!(msg.system_prompt().is_none());
     }
 
     #[test]
@@ -327,6 +349,7 @@ mod tests {
         }]);
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.content.len(), 1);
+        assert!(msg.system_prompt().is_none());
     }
 
     #[test]

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2] - 2026-07-25
+### Added
+- New APIs: 
+    - OpenAICompatProvider: new, with_base_url
+    - Message: system_prompt
+
+### Fixed
+- Polish tokio features: rt, macros, rt-multi-thread
+
 ## [0.1.1] - 2026-07-25
 
 ### Added

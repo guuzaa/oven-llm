@@ -126,7 +126,7 @@ impl Message {
         }])
     }
 
-    /// Constructs system prompt from this `Message` only when its role is `Role::System`. 
+    /// Constructs system prompt from this `Message` only when its role is `Role::System`.
     /// Otherwise, it returns `None`
     pub fn system_prompt(&self) -> Option<String> {
         match self.role {

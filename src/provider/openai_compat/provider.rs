@@ -20,7 +20,9 @@ use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use futures_lite::io::AsyncReadExt;
+use isahc::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use isahc::prelude::*;
 use secrecy::{ExposeSecret, SecretString};
 
 use super::decoder::{self, StreamDecoder};
@@ -44,7 +46,7 @@ pub struct OpenAICompatProvider {
     api_key: SecretString,
     extra_headers: HeaderMap,
     model_catalog: HashMap<ModelId, ModelInfo>,
-    client: reqwest::Client,
+    client: isahc::HttpClient,
 }
 
 impl OpenAICompatProvider {
@@ -113,7 +115,7 @@ impl OpenAICompatProvider {
             api_key,
             extra_headers,
             model_catalog,
-            client: reqwest::Client::new(),
+            client: isahc::HttpClient::new().expect("isahc HttpClient::new() should succeed"),
         }
     }
 
@@ -233,14 +235,20 @@ impl OpenAICompatProvider {
     async fn post_chat_completions(
         &self,
         body: &serde_json::Value,
-    ) -> Result<reqwest::Response, ProviderError> {
-        let response = self
-            .client
-            .post(self.endpoint("chat/completions"))
-            .headers(self.build_headers())
-            .json(body)
-            .send()
-            .await?;
+    ) -> Result<isahc::Response<isahc::AsyncBody>, ProviderError> {
+        let body_bytes = serde_json::to_vec(body).map_err(|e| {
+            ProviderError::Encode(super::encoder::EncodeError::InvalidContent(e.to_string()))
+        })?;
+
+        let mut builder = isahc::http::Request::post(self.endpoint("chat/completions"));
+        for (name, value) in self.build_headers().iter() {
+            builder = builder.header(name, value);
+        }
+        let request = builder
+            .body(body_bytes)
+            .expect("valid HTTP request construction");
+
+        let response = self.client.send_async(request).await?;
 
         self.check_status(response).await
     }
@@ -249,15 +257,17 @@ impl OpenAICompatProvider {
     /// 2xx 时原样返回 `response` 供调用方继续处理（消费其 body/字节流）。
     async fn check_status(
         &self,
-        response: reqwest::Response,
-    ) -> Result<reqwest::Response, ProviderError> {
+        response: isahc::Response<isahc::AsyncBody>,
+    ) -> Result<isahc::Response<isahc::AsyncBody>, ProviderError> {
         let status = response.status();
         if status.is_success() {
             return Ok(response);
         }
 
-        let body = response.text().await.unwrap_or_default();
-        match status.as_u16() {
+        let status_code = status.as_u16();
+        let mut resp = response;
+        let body = resp.text().await.unwrap_or_default();
+        match status_code {
             401 | 403 => Err(ProviderError::Auth(body)),
             429 => Err(ProviderError::RateLimit {
                 retry_after_ms: None,
@@ -270,15 +280,37 @@ impl OpenAICompatProvider {
     }
 }
 
+/// 将 `isahc::AsyncBody` 转换为 `Stream<Item = Result<Vec<u8>, io::Error>>`。
+///
+/// `eventsource-stream` 期望输入为 `Stream`，而 isahc 的响应体实现的是
+/// `AsyncRead` —— 因此需要通过此适配器桥接。
+fn body_to_stream(
+    mut body: isahc::AsyncBody,
+) -> impl futures::stream::Stream<Item = Result<Vec<u8>, std::io::Error>> + Send {
+    async_stream::stream! {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            match body.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => yield Ok(buf[..n].to_vec()),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => yield Err(e),
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for OpenAICompatProvider {
     /// 发送一次非流式请求（Requirement 6.1：强制 `stream = false`）。
     async fn complete(&self, req: &Request) -> Result<Response, ProviderError> {
         self.validate_known_model(req, false)?;
         let body = self.build_body(req, false)?;
-        let response = self.post_chat_completions(&body).await?;
+        let mut response = self.post_chat_completions(&body).await?;
 
-        let wire: ChatCompletionResponse = response.json().await?;
+        let body_bytes = response.bytes().await?;
+        let wire: ChatCompletionResponse = serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProviderError::Decode(super::decoder::DecodeError::Json(e)))?;
 
         decoder::decode_response(wire).map_err(ProviderError::from)
     }
@@ -295,7 +327,7 @@ impl Provider for OpenAICompatProvider {
         let body = self.build_body(req, true)?;
         let response = self.post_chat_completions(&body).await?;
 
-        let byte_stream = response.bytes_stream();
+        let byte_stream = Box::pin(body_to_stream(response.into_body()));
         let mut sse_stream = byte_stream.eventsource();
 
         let stream = async_stream::stream! {
@@ -376,16 +408,18 @@ impl Provider for OpenAICompatProvider {
     /// GET `{base_url}/models`，仅填充 `id` 与 `provider` 字段
     /// （Requirement 6.6）。
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        let response = self
-            .client
-            .get(self.endpoint("models"))
-            .headers(self.build_headers())
-            .send()
-            .await?;
+        let mut builder = isahc::http::Request::get(self.endpoint("models"));
+        for (name, value) in self.build_headers().iter() {
+            builder = builder.header(name, value);
+        }
+        let request = builder.body(()).expect("valid HTTP request construction");
 
-        let response = self.check_status(response).await?;
+        let response = self.client.send_async(request).await?;
+        let mut response = self.check_status(response).await?;
 
-        let body: ModelsListResponse = response.json().await?;
+        let body_bytes = response.bytes().await?;
+        let body: ModelsListResponse = serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProviderError::Decode(super::decoder::DecodeError::Json(e)))?;
 
         Ok(body
             .data
@@ -411,7 +445,7 @@ struct ModelsListEntry {
 mod tests {
     use super::*;
     use crate::domain::message::{ContentBlock, Message};
-    use reqwest::header::HeaderName;
+    use isahc::http::header::HeaderName;
     use serde_json::json;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -1,7 +1,4 @@
 //! `ProviderError`：所有 provider 操作的统一错误类型。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "provider 层：`Provider` trait 与错误类型" 一节。
 
 use thiserror::Error;
 
@@ -15,9 +12,12 @@ pub type Result<T> = std::result::Result<T, ProviderError>;
 /// 所有 `Provider` 方法（`complete` / `stream` / `list_models`）共用的错误类型。
 #[derive(Debug, Error)]
 pub enum ProviderError {
-    /// HTTP 请求失败（网络层），由 `reqwest::Error` 自动转换。
+    /// HTTP 请求/传输层失败，由 `isahc::Error` 自动转换。
     #[error("transport error: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(#[from] isahc::Error),
+    /// 流式 / 响应体读取 I/O 错误。
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     /// HTTP 401/403，携带响应体。
     #[error("authentication failed: {0}")]
     Auth(String),

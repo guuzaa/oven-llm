@@ -7,7 +7,7 @@ A Rust library for calling LLM providers with a unified API.
 - Unified API for multiple LLM providers
 - Streaming support
 - Tool/function calling
-- Async/await with Tokio
+- Async/await runtime-agnostic
 
 ## Usage
 

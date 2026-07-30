@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.1.2] - 2026-07-25
+## [0.1.3] - 2026-07-30
+### Fixed
+- Polish Cargo.toml: cut unused files for package
+- Replace reqwest with isahc, making this lib asynchronous runtime-agnostic
+
+## [0.1.2] - 2026-07-28
 ### Added
 - New APIs: 
     - OpenAICompatProvider: new, with_base_url

@@ -4,6 +4,9 @@ use thiserror::Error;
 
 use crate::domain::StreamCollectorError;
 use crate::provider::openai_compat::{DecodeError, EncodeError};
+use crate::provider::responses::{
+    DecodeError as ResponsesDecodeError, EncodeError as ResponsesEncodeError,
+};
 use crate::provider::validate::ValidationError;
 
 /// `Provider` 方法的便捷 Result 别名。
@@ -39,6 +42,12 @@ pub enum ProviderError {
     /// 请求编码为 wire 格式失败。
     #[error("encoding error")]
     Encode(#[source] EncodeError),
+    /// Responses API 响应解码失败。
+    #[error("responses decode error")]
+    ResponsesDecode(#[source] ResponsesDecodeError),
+    /// Responses API 请求编码失败。
+    #[error("responses encoding error")]
+    ResponsesEncode(#[source] ResponsesEncodeError),
 }
 
 impl From<StreamCollectorError> for ProviderError {
@@ -56,6 +65,18 @@ impl From<DecodeError> for ProviderError {
 impl From<EncodeError> for ProviderError {
     fn from(err: EncodeError) -> Self {
         ProviderError::Encode(err)
+    }
+}
+
+impl From<ResponsesDecodeError> for ProviderError {
+    fn from(err: ResponsesDecodeError) -> Self {
+        ProviderError::ResponsesDecode(err)
+    }
+}
+
+impl From<ResponsesEncodeError> for ProviderError {
+    fn from(err: ResponsesEncodeError) -> Self {
+        ProviderError::ResponsesEncode(err)
     }
 }
 
@@ -130,6 +151,24 @@ mod tests {
         let inner = EncodeError::InvalidContent("bad".to_string());
         let err = ProviderError::Encode(inner);
         assert_eq!(err.to_string(), "encoding error");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn responses_decode_error_display() {
+        let inner = ResponsesDecodeError::Failed {
+            message: "boom".to_string(),
+        };
+        let err = ProviderError::ResponsesDecode(inner);
+        assert_eq!(err.to_string(), "responses decode error");
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn responses_encode_error_display() {
+        let inner = ResponsesEncodeError::InvalidContent("bad".to_string());
+        let err = ProviderError::ResponsesEncode(inner);
+        assert_eq!(err.to_string(), "responses encoding error");
         assert!(err.source().is_some());
     }
 

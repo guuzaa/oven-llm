@@ -4,6 +4,7 @@ pub mod error;
 pub mod model;
 pub mod openai_compat;
 pub mod registry;
+pub mod responses;
 pub mod validate;
 
 pub use error::{ProviderError, Result};
@@ -12,6 +13,7 @@ pub use openai_compat::{
     OpenAICompatProvider, all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models,
 };
 pub use registry::ModelRegistry;
+pub use responses::ResponsesProvider;
 pub use validate::{ValidationError, estimate_input_tokens, validate_request};
 
 use async_trait::async_trait;

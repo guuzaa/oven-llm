@@ -16,10 +16,9 @@ use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use futures_lite::io::AsyncReadExt;
-use isahc::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use isahc::http::header::HeaderMap;
 use isahc::prelude::*;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use super::decoder::{self, StreamDecoder};
 use super::encoder;
@@ -27,6 +26,7 @@ use super::models::{deepseek_models, moonshot_models, zhipu_models};
 use super::types::{ChatCompletionChunk, ChatCompletionResponse};
 use crate::ProviderName;
 use crate::domain::{ModelId, Request, Response, StreamEvent};
+use crate::provider::http;
 use crate::provider::model::ModelInfo;
 use crate::provider::validate::validate_request;
 use crate::provider::{Provider, ProviderError};
@@ -163,34 +163,6 @@ impl OpenAICompatProvider {
         )
     }
 
-    /// 构造本次请求的完整请求头：`Authorization: Bearer <api_key>` +
-    /// `Content-Type: application/json`，再合并 `extra_headers`
-    /// （`extra_headers` 中的同名头会覆盖前两者）。
-    fn build_headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        let auth_value = format!("Bearer {}", self.api_key.expose_secret());
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&auth_value)
-                .unwrap_or_else(|_| HeaderValue::from_static("Bearer invalid-api-key")),
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-        for (name, value) in self.extra_headers.iter() {
-            headers.insert(name.clone(), value.clone());
-        }
-
-        headers
-    }
-
-    /// 将 `base_url` 与 `path` 拼接为完整端点 URL，正确处理
-    /// `base_url` 末尾和 `path` 开头可能存在/不存在的 `/`。
-    fn endpoint(&self, path: &str) -> String {
-        let base = self.base_url.trim_end_matches('/');
-        let path = path.trim_start_matches('/');
-        format!("{base}/{path}")
-    }
-
     /// 将 `Request` 编码为最终发送的 JSON 请求体：先由 `encoder::encode_request`
     /// 产出标准 wire JSON，再把 `req.provider_options` 中的每个键值对合并进去
     /// （Requirement 7.1）。`provider_options` 的键与标准字段重名时会覆盖标准
@@ -236,63 +208,9 @@ impl OpenAICompatProvider {
             ProviderError::Encode(super::encoder::EncodeError::InvalidContent(e.to_string()))
         })?;
 
-        let mut builder = isahc::http::Request::post(self.endpoint("chat/completions"));
-        for (name, value) in self.build_headers().iter() {
-            builder = builder.header(name, value);
-        }
-        let request = builder
-            .body(body_bytes)
-            .expect("valid HTTP request construction");
-
-        let response = self.client.send_async(request).await?;
-
-        self.check_status(response).await
-    }
-
-    /// 检查响应状态码，非 2xx 时读取响应体并映射为具体的 `ProviderError`；
-    /// 2xx 时原样返回 `response` 供调用方继续处理（消费其 body/字节流）。
-    async fn check_status(
-        &self,
-        response: isahc::Response<isahc::AsyncBody>,
-    ) -> Result<isahc::Response<isahc::AsyncBody>, ProviderError> {
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-
-        let status_code = status.as_u16();
-        let mut resp = response;
-        let body = resp.text().await.unwrap_or_default();
-        match status_code {
-            401 | 403 => Err(ProviderError::Auth(body)),
-            429 => Err(ProviderError::RateLimit {
-                retry_after_ms: None,
-            }),
-            other => Err(ProviderError::Api {
-                status: other,
-                body,
-            }),
-        }
-    }
-}
-
-/// 将 `isahc::AsyncBody` 转换为 `Stream<Item = Result<Vec<u8>, io::Error>>`。
-///
-/// `eventsource-stream` 期望输入为 `Stream`，而 isahc 的响应体实现的是
-/// `AsyncRead` —— 因此需要通过此适配器桥接。
-fn body_to_stream(
-    mut body: isahc::AsyncBody,
-) -> impl futures::stream::Stream<Item = Result<Vec<u8>, std::io::Error>> + Send {
-    async_stream::stream! {
-        let mut buf = vec![0u8; 8192];
-        loop {
-            match body.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => yield Ok(buf[..n].to_vec()),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => yield Err(e),
-            }
-        }
+        let headers = http::build_headers(&self.api_key, &self.extra_headers);
+        let url = http::endpoint(&self.base_url, "chat/completions");
+        http::post_json(&self.client, &headers, url, body_bytes).await
     }
 }
 
@@ -323,7 +241,7 @@ impl Provider for OpenAICompatProvider {
         let body = self.build_body(req, true)?;
         let response = self.post_chat_completions(&body).await?;
 
-        let byte_stream = Box::pin(body_to_stream(response.into_body()));
+        let byte_stream = Box::pin(http::body_to_stream(response.into_body()));
         let mut sse_stream = byte_stream.eventsource();
 
         let stream = async_stream::stream! {
@@ -404,44 +322,23 @@ impl Provider for OpenAICompatProvider {
     /// GET `{base_url}/models`，仅填充 `id` 与 `provider` 字段
     /// （Requirement 6.6）。
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        let mut builder = isahc::http::Request::get(self.endpoint("models"));
-        for (name, value) in self.build_headers().iter() {
-            builder = builder.header(name, value);
-        }
-        let request = builder.body(()).expect("valid HTTP request construction");
-
-        let response = self.client.send_async(request).await?;
-        let mut response = self.check_status(response).await?;
-
-        let body_bytes = response.bytes().await?;
-        let body: ModelsListResponse = serde_json::from_slice(&body_bytes)
-            .map_err(|e| ProviderError::Decode(super::decoder::DecodeError::Json(e)))?;
-
-        Ok(body
-            .data
-            .into_iter()
-            .map(|entry| ModelInfo::minimal(entry.id, self.provider_name.clone()))
-            .collect())
+        let headers = http::build_headers(&self.api_key, &self.extra_headers);
+        http::list_models(
+            &self.client,
+            &headers,
+            &self.base_url,
+            &self.provider_name,
+            |e| ProviderError::Decode(super::decoder::DecodeError::Json(e)),
+        )
+        .await
     }
-}
-
-/// `GET /models` 响应体的最小反序列化目标：`{"data": [{"id": "..."}, ...]}`。
-#[derive(Debug, serde::Deserialize)]
-struct ModelsListResponse {
-    data: Vec<ModelsListEntry>,
-}
-
-/// `ModelsListResponse.data` 中的单个条目：只关心 `id`，其余字段忽略。
-#[derive(Debug, serde::Deserialize)]
-struct ModelsListEntry {
-    id: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::message::{ContentBlock, Message};
-    use isahc::http::header::HeaderName;
+    use isahc::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName, HeaderValue};
     use serde_json::json;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -567,7 +464,7 @@ mod tests {
             ProviderName::Custom("example".into()),
             api_key("secret-token"),
         );
-        let headers = provider.build_headers();
+        let headers = http::build_headers(&provider.api_key, &provider.extra_headers);
         assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Bearer secret-token");
         assert_eq!(headers.get(CONTENT_TYPE).unwrap(), "application/json");
     }
@@ -586,7 +483,7 @@ mod tests {
             Vec::new(),
             extra,
         );
-        let headers = provider.build_headers();
+        let headers = http::build_headers(&provider.api_key, &provider.extra_headers);
         assert_eq!(headers.get("x-custom").unwrap(), "value");
     }
 
@@ -600,7 +497,7 @@ mod tests {
             api_key("k"),
         );
         assert_eq!(
-            provider.endpoint("chat/completions"),
+            http::endpoint(&provider.base_url, "chat/completions"),
             "https://example.com/chat/completions"
         );
     }
@@ -613,7 +510,7 @@ mod tests {
             api_key("k"),
         );
         assert_eq!(
-            provider.endpoint("/chat/completions"),
+            http::endpoint(&provider.base_url, "/chat/completions"),
             "https://example.com/chat/completions"
         );
     }

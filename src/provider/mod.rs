@@ -1,6 +1,7 @@
 //! `provider` 层：`Provider` trait、错误类型与模型能力信息。
 
 pub mod error;
+pub(crate) mod http;
 pub mod model;
 pub mod openai_compat;
 pub mod registry;

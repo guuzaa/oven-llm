@@ -1,9 +1,5 @@
 //! 静态模型元数据：`deepseek`/`moonshot`/`zhipu` 三个 OpenAI 兼容服务商的
 //! 已知模型列表。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "provider::openai_compat：OpenAI 兼容实现" 一节，以及
-//! `Provider::known_models` 的默认实现（Requirement 8.1）。
 
 use crate::provider::ProviderName;
 use crate::provider::model::{ModelCapabilities, ModelInfo, Pricing};

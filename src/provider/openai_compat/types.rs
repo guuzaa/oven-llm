@@ -1,12 +1,4 @@
 //! OpenAI Chat Completions 的 wire 格式类型。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "wire 类型（`types.rs`）" 一节。这些类型仅在 `openai_compat` 模块内部
-//! （encoder/decoder/provider）使用，不是 crate 的公开 API 的一部分；字段
-//! 命名与序列化行为对齐 OpenAI Chat Completions API 的实际 wire 格式。
-//!
-//! `encoder.rs`（任务 9）与 `decoder.rs`（任务 10、11）尚未实现，因此本模块
-//! 目前暂无消费者，允许 dead_code 警告。
 
 #![allow(dead_code)]
 

@@ -1,7 +1,4 @@
 //! `ModelRegistry`：管理多个 `ModelInfo` 的注册表。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中 "ModelRegistry"
-//! 一节，以及需求文档 Requirement 8。
 
 use std::collections::HashMap;
 

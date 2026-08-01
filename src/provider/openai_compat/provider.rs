@@ -1,10 +1,6 @@
 //! `OpenAICompatProvider`：OpenAI Chat Completions 兼容协议的 `Provider`
 //! 实现（传输层）。
 //!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "`OpenAICompatProvider`（`provider.rs`）" 一节，以及需求文档
-//! Requirement 6（传输与错误映射）与 Requirement 7（provider_options 直通）。
-//!
 //! 本模块负责把 domain 层的 `Request`/`Response`/`StreamEvent` 与
 //! `encoder`/`decoder` 串联起来，完成实际的 HTTP 调用：
 //! - `build_body`：`encoder::encode_request` + `provider_options` 合并

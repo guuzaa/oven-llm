@@ -1,7 +1,4 @@
 //! `Tool` / `ToolChoice`：工具定义与工具选择策略。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "Tool / ToolChoice（`domain/tool.rs`）" 一节。
 
 use serde::{Deserialize, Serialize};
 

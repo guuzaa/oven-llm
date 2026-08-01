@@ -1,8 +1,4 @@
 //! 请求校验：`validate_request` / `estimate_input_tokens`。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "validate_request / estimate_input_tokens（`provider/validate.rs`）" 一节，
-//! 以及需求文档 Requirement 9。
 
 use thiserror::Error;
 

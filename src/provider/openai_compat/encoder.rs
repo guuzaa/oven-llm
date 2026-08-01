@@ -1,15 +1,8 @@
 //! encoder：将 domain 层的 `Request` 转换为 OpenAI Chat Completions 的
 //! wire 格式 `ChatCompletionRequest`。
 //!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "encoder：domain → wire（`encoder.rs`）" 一节，以及需求文档
-//! Requirement 3。
-//!
 //! 本模块是纯函数集合，不做任何 I/O；不读取或处理
 //! `Request.provider_options` 字段（该字段的合并逻辑位于 transport 层）。
-//!
-//! `decoder.rs`（任务 10、11）与 `provider.rs`（任务 14）尚未实现，
-//! 因此 `encode_request` 目前暂无消费者，允许 dead_code 警告。
 
 #![allow(dead_code)]
 

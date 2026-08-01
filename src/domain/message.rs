@@ -1,7 +1,4 @@
 //! `Role` / `ContentBlock` / `Message`：provider 无关的消息模型。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "Role / ContentBlock / Message（`domain/message.rs`）" 一节。
 
 use serde::{Deserialize, Serialize};
 

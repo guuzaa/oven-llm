@@ -1,8 +1,5 @@
 //! `Delta` / `StreamEvent`：统一流式事件模型。
 //!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "StreamEvent / Delta（`domain/stream.rs`）" 一节。
-//!
 //! `StreamEvent` 镜像 Anthropic 的事件粒度；每个 provider 的原生流都被翻译成
 //! 这套表示，harness 代码无需关心底层 provider 是谁。
 

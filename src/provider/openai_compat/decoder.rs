@@ -1,13 +1,5 @@
 //! decoder：将 OpenAI Chat Completions 的 wire 格式响应转换为 domain 层的
 //! `Response` / `StreamEvent`。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "decoder：wire → domain（`decoder.rs`）" 一节，以及需求文档
-//! Requirement 4（非流式）与 Requirement 5（流式）。
-//!
-//! 非流式部分：`decode_response` / `map_stop_reason`（任务 10）。
-//! 流式部分：`StreamDecoder`（任务 11），把 OpenAI 扁平的 delta 流升维为
-//! Anthropic 风格的块事件序列。
 
 #![allow(dead_code)]
 
@@ -29,10 +21,6 @@ pub enum DecodeError {
     /// wire 响应的 `choices` 字段为空（Requirement 4.1）。
     #[error("response has no choices")]
     MissingChoice,
-    /// wire 响应的 `choices` 字段包含多于一个元素；当前只支持
-    /// `n = 1`（Requirement 4.2）。
-    #[error("response has {count} choices, expected exactly 1")]
-    MultipleChoices { count: usize },
     /// wire 响应中 choice 的消息角色不是 `"assistant"`（Requirement 4.3）。
     #[error("unexpected message role: {role}")]
     UnexpectedRole { role: String },
@@ -73,7 +61,7 @@ pub(crate) fn map_stop_reason(finish_reason: &str) -> Option<StopReason> {
 /// 将 OpenAI Chat Completions 的非流式响应体解码为 domain 层的 `Response`。
 ///
 /// - `choices` 为空 → `DecodeError::MissingChoice`
-/// - `choices` 长度 > 1 → `DecodeError::MultipleChoices`
+/// - `choices` 多于一个时只取第一个，忽略多余的 choice（与流式行为一致）
 /// - 唯一 choice 的消息角色非 `"assistant"` → `DecodeError::UnexpectedRole`
 /// - 任意 `tool_calls[].function.arguments` 非合法 JSON →
 ///   `DecodeError::InvalidToolArguments`
@@ -83,12 +71,8 @@ pub(crate) fn decode_response(wire: ChatCompletionResponse) -> Result<Response, 
     if wire.choices.is_empty() {
         return Err(DecodeError::MissingChoice);
     }
-    if wire.choices.len() > 1 {
-        return Err(DecodeError::MultipleChoices {
-            count: wire.choices.len(),
-        });
-    }
 
+    // 只处理第一个 choice，忽略多余的 choice。
     let choice = wire
         .choices
         .into_iter()
@@ -256,7 +240,7 @@ impl StreamDecoder {
             self.phase = StreamPhase::Streaming;
         }
 
-        // 当前只支持 n = 1：只处理第一个 choice，忽略多余的 choice。
+        // 与非流式一致：只处理第一个 choice，忽略多余的 choice。
         let Some(choice) = chunk.choices.into_iter().next() else {
             return Ok(events);
         };
@@ -488,7 +472,7 @@ mod tests {
         }
     }
 
-    // --- choices count (Requirement 4.1, 4.2) ---
+    // --- choices 数量处理 ---
 
     #[test]
     fn empty_choices_returns_missing_choice() {
@@ -498,19 +482,22 @@ mod tests {
     }
 
     #[test]
-    fn multiple_choices_returns_multiple_choices_with_count() {
+    fn multiple_choices_uses_first_choice_and_ignores_rest() {
         let wire = wire_response(
             vec![
-                choice(assistant_message(Some("a")), Some("stop")),
-                choice(assistant_message(Some("b")), Some("stop")),
+                choice(assistant_message(Some("first")), Some("stop")),
+                choice(assistant_message(Some("second")), Some("length")),
             ],
             None,
         );
-        let err = decode_response(wire).unwrap_err();
-        match err {
-            DecodeError::MultipleChoices { count } => assert_eq!(count, 2),
-            other => panic!("expected MultipleChoices, got {other:?}"),
+        let response = decode_response(wire).unwrap();
+        assert_eq!(response.content.len(), 1);
+        match &response.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "first"),
+            other => panic!("expected Text block, got {other:?}"),
         }
+        // 第二个 choice 的文本与 finish_reason 均被忽略。
+        assert_eq!(response.stop_reason, Some(StopReason::EndTurn));
     }
 
     // --- role check (Requirement 4.3) ---

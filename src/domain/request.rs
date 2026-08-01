@@ -1,7 +1,4 @@
 //! `ModelId` / `SamplingParams` / `Request`：provider 无关的请求模型。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "SamplingParams / Request（`domain/request.rs`）" 一节。
 
 use std::{borrow::Borrow, fmt};
 

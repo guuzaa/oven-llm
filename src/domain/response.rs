@@ -1,7 +1,4 @@
 //! `Usage` / `StopReason` / `Response`：provider 无关的非流式响应模型。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "Usage / StopReason / Response（`domain/response.rs`）" 一节。
 
 use std::ops::{Add, AddAssign};
 

@@ -1,7 +1,4 @@
 //! `ModelInfo` / `ModelCapabilities` / `Pricing`：模型能力身份证。
-//!
-//! 参见设计文档 `.kiro/specs/oven-llm-core/design.md` 中
-//! "模型能力层" 一节。
 
 use crate::ProviderName;
 

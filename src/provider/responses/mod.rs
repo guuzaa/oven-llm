@@ -9,6 +9,8 @@ pub mod decoder;
 pub mod encoder;
 pub mod models;
 pub mod provider;
+#[cfg(test)]
+mod testdata;
 pub mod types;
 
 pub use decoder::DecodeError;

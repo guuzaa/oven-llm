@@ -325,6 +325,7 @@ impl Provider for ResponsesProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::super::testdata::deepseek_sse;
     use super::*;
     use crate::domain::message::{ContentBlock, Message};
     use crate::domain::stream::StreamCollector;
@@ -332,10 +333,6 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    /// DeepSeek 实测返回的 SSE 流（见 `testdata/deepseek_responses.log`），
-    /// 编译期通过 `include_str!` 嵌入，测试不依赖 `scripts/` 目录。
-    const DEEPSEEK_RESPONSES_SSE: &str = include_str!("testdata/deepseek_responses.log");
 
     fn api_key(value: &str) -> SecretString {
         SecretString::new(value.to_string().into())
@@ -697,7 +694,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
-                    .set_body_string(DEEPSEEK_RESPONSES_SSE),
+                    .set_body_string(deepseek_sse()),
             )
             .mount(&mock_server)
             .await;

@@ -487,11 +487,9 @@ impl StreamDecoder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::testdata::{deepseek_sse, grok_sse};
     use super::*;
     use crate::domain::stream::StreamCollector;
-
-    const DEEPSEEK_RESPONSES_SSE: &str = include_str!("testdata/deepseek_responses.log");
-    const GROK_RESPONSE_SSE: &str = include_str!("testdata/grok_response.log");
 
     fn wire_response(
         status: &str,
@@ -530,8 +528,23 @@ mod tests {
     }
 
     /// 解析内联的 SSE 文本为事件序列（测试用）。
+    ///
+    /// `str::lines()` 按 `\n` 切分并剥离行尾 `\r`，因此同时兼容 LF 与
+    /// Windows CRLF，无需手动替换换行符；空行表示事件边界。每个事件块取
+    /// 第一条 `data: ` 行的载荷。
     fn log_events_from_sse(sse: &str) -> Vec<ResponseEvent> {
-        sse.split("\n\n")
+        let mut blocks = vec![String::new()];
+        for line in sse.lines() {
+            if line.is_empty() {
+                blocks.push(String::new());
+            } else if let Some(block) = blocks.last_mut() {
+                block.push_str(line);
+                block.push('\n');
+            }
+        }
+
+        blocks
+            .iter()
             .filter_map(|block| {
                 let data = block.lines().find(|line| line.starts_with("data: "))?;
                 let json: serde_json::Value =
@@ -539,6 +552,14 @@ mod tests {
                 serde_json::from_value(json).ok()
             })
             .collect()
+    }
+
+    #[test]
+    fn log_events_from_sse_handles_crlf_line_endings() {
+        let crlf = deepseek_sse().replace('\n', "\r\n");
+        let events = log_events_from_sse(&crlf);
+        assert_eq!(events.len(), log_events_from_sse(&deepseek_sse()).len());
+        assert!(!events.is_empty());
     }
 
     // --- 非流式 decode_response ---
@@ -707,7 +728,7 @@ mod tests {
 
     #[test]
     fn deepseek_log_replay_produces_expected_event_sequence() {
-        let events = log_events_from_sse(DEEPSEEK_RESPONSES_SSE);
+        let events = log_events_from_sse(&deepseek_sse());
         assert!(!events.is_empty());
         assert!(matches!(events[0], ResponseEvent::ResponseCreated { .. }));
 
@@ -802,7 +823,7 @@ mod tests {
 
     #[test]
     fn deepseek_log_replay_collects_into_response() {
-        let events = log_events_from_sse(DEEPSEEK_RESPONSES_SSE);
+        let events = log_events_from_sse(&deepseek_sse());
         let mut decoder = StreamDecoder::new();
         let mut collector = StreamCollector::new();
         for event in events {
@@ -846,7 +867,7 @@ mod tests {
 
     #[test]
     fn grok_log_replay_produces_thinking_block() {
-        let events = log_events_from_sse(GROK_RESPONSE_SSE);
+        let events = log_events_from_sse(&grok_sse());
         assert!(!events.is_empty());
 
         let mut decoder = StreamDecoder::new();

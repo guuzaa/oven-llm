@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.2.0] - 2026-08-02
+### Added
+- OpenAI Responses API support: `ResponsesProvider` with DeepSeek / Grok / OpenAI
+  presets, wire types, encoder/decoder, SSE streaming, and a new
+  `responses_usage` example.
+- Re-export `secrecy::SecretString` as `oven_llm::SecretString` for callers that
+  want to wrap API keys explicitly.
+
+### Changed
+- Rename `OpenAICompatProvider` to `CompletionsProvider` and the `openai_compat`
+  module to `completions` (breaking).
+- Remove the aggregate model-list APIs (`all_openai_compat_models`,
+  `all_responses_models`) and their re-exports (breaking).
+- Sort `ProviderError` variants into a stable, grouped order.
+- Extract the shared HTTP transport into `provider/http.rs` (auth headers,
+  endpoint joining, status-code mapping, SSE bridging, `list_models`) and use it
+  from both providers.
+- Provider constructors (`new`, `with_base_url`, `with_models`, and all vendor
+  presets) now accept `impl Into<SecretString>`: callers can pass a plain
+  `String` or `&str` without depending on `secrecy`; the key is still stored
+  internally as `SecretString`.
+- Rewrite the README with a feature overview, protocol descriptions, code
+  examples, and a contribution guide; rename the `basic_usage` example to
+  `completions_usage`.
+
+### Fixed
+- Non-streaming `complete` now decodes the first choice instead of rejecting
+  responses with multiple `choices`, matching streaming behavior.
+- Flaky Responses decoder tests on Windows: SSE test fixtures now handle CRLF
+  line endings.
+
+### Removed
+- `CompletionsDecodeError::MultipleChoices` and its validation logic.
+- Stale design-document references from module-level docs.
+
 ## [0.1.3] - 2026-07-30
 ### Fixed
 - Polish Cargo.toml: cut unused files for package

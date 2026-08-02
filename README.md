@@ -50,7 +50,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-oven-llm = "0.1"
+oven-llm = "0.2"
 ```
 
 A minimal non-streaming call:

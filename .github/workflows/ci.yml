@@ -17,11 +17,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.85.0"
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -29,12 +30,9 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Cargo cache
-        uses: actions/cache@v5
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Build on ${{ matrix.os }}
         run: cargo build

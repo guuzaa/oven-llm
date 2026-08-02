@@ -1,4 +1,4 @@
-//! `oven-llm` 基础用法示例。
+//! `oven-llm` CompletionsProvider 基础用法示例。
 //!
 //! 演示：
 //! - 使用 `ModelId` 构建 provider 无关的 `Request`

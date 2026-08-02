@@ -15,5 +15,4 @@ pub mod types;
 
 pub use decoder::DecodeError;
 pub use encoder::EncodeError;
-pub use models::{all_responses_models, deepseek_models, grok_models};
 pub use provider::ResponsesProvider;

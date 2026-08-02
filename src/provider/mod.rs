@@ -1,18 +1,16 @@
 //! `provider` 层：`Provider` trait、错误类型与模型能力信息。
 
-pub mod error;
+mod completions;
+mod error;
 pub(crate) mod http;
 pub mod model;
-pub mod openai_compat;
-pub mod registry;
-pub mod responses;
+mod registry;
+mod responses;
 pub mod validate;
 
+pub use completions::CompletionsProvider;
 pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
-pub use openai_compat::{
-    CompletionsProvider, all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models,
-};
 pub use registry::ModelRegistry;
 pub use responses::ResponsesProvider;
 pub use validate::{ValidationError, estimate_input_tokens, validate_request};

@@ -53,14 +53,6 @@ pub fn grok_models() -> Vec<ModelInfo> {
     }]
 }
 
-/// 合并 `deepseek_models` / `grok_models`，得到所有 Responses API 服务商的
-/// 静态模型元数据。
-pub fn all_responses_models() -> Vec<ModelInfo> {
-    let mut models = deepseek_models();
-    models.extend(grok_models());
-    models
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,15 +78,5 @@ mod tests {
             assert_eq!(model.provider, ProviderName::Grok);
         }
         assert!(models.iter().any(|m| m.id == "grok-build-0.1"));
-    }
-
-    #[test]
-    fn all_responses_models_merges_both_lists() {
-        let all = all_responses_models();
-        assert_eq!(all.len(), deepseek_models().len() + grok_models().len());
-        let mut seen = HashSet::new();
-        for model in all {
-            assert!(seen.insert(model.id.clone()));
-        }
     }
 }

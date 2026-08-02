@@ -446,7 +446,7 @@ impl StreamDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::openai_compat::types::{
+    use crate::provider::completions::types::{
         WireChoice, WireResponseMessage, WireResponseToolCallFunction, WireTokenDetails,
     };
 
@@ -819,7 +819,7 @@ mod tests {
     // StreamDecoder（任务 11，Requirement 5）
     // -----------------------------------------------------------------------
 
-    use crate::provider::openai_compat::types::{WireStreamChoice, WireStreamToolCallFunction};
+    use crate::provider::completions::types::{WireStreamChoice, WireStreamToolCallFunction};
 
     fn stream_chunk(
         choices: Vec<WireStreamChoice>,

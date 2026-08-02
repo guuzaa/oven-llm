@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use crate::domain::StreamCollectorError;
-use crate::provider::openai_compat::{CompletionsDecodeError, CompletionsEncodeError};
+use crate::provider::completions::{CompletionsDecodeError, CompletionsEncodeError};
 use crate::provider::responses::{
     DecodeError as ResponsesDecodeError, EncodeError as ResponsesEncodeError,
 };

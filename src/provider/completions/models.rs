@@ -196,15 +196,6 @@ pub fn zhipu_models() -> Vec<ModelInfo> {
     ]
 }
 
-/// 合并 `deepseek_models`/`moonshot_models`/`zhipu_models` 三者，得到
-/// 所有 openai_compat 服务商的静态模型元数据。
-pub fn all_openai_compat_models() -> Vec<ModelInfo> {
-    let mut models = deepseek_models();
-    models.extend(moonshot_models());
-    models.extend(zhipu_models());
-    models
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,25 +241,5 @@ mod tests {
         let models = zhipu_models();
         assert_unique_ids(&models);
         assert_provider(&models, &ProviderName::Zhipu);
-    }
-
-    #[test]
-    fn all_openai_compat_models_merges_all_three_lists() {
-        let deepseek = deepseek_models();
-        let moonshot = moonshot_models();
-        let zhipu = zhipu_models();
-        let all = all_openai_compat_models();
-
-        assert_eq!(all.len(), deepseek.len() + moonshot.len() + zhipu.len());
-        assert_unique_ids(&all);
-
-        for model in deepseek.iter().chain(moonshot.iter()).chain(zhipu.iter()) {
-            assert!(
-                all.iter()
-                    .any(|m| m.id == model.id && m.provider == model.provider),
-                "missing model {} in all_openai_compat_models()",
-                model.id
-            );
-        }
     }
 }

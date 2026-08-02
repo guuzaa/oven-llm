@@ -24,7 +24,6 @@ use oven_llm::{
     ContentBlock, Delta, Message, Provider, Request, ResponsesProvider, StopReason,
     StreamCollector, StreamEvent, Tool,
 };
-use secrecy::SecretString;
 use serde_json::{Value, json};
 
 #[tokio::main]
@@ -33,7 +32,7 @@ async fn main() {
     //    或 `with_base_url` / `with_models` 自定义服务商）。
     let api_key =
         std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = ResponsesProvider::deepseek(SecretString::new(api_key.into()));
+    let provider = ResponsesProvider::deepseek(api_key);
     println!("provider: {:?}", provider.provider_name());
 
     // 2. 动态模型发现。可能因缺少真实 API key/网络而失败，打印错误后继续。

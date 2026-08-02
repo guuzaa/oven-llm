@@ -51,19 +51,17 @@ Add to `Cargo.toml`:
 ```toml
 [dependencies]
 oven-llm = "0.1"
-secrecy = "0.10"
 ```
 
 A minimal non-streaming call:
 
 ```rust
 use oven_llm::{CompletionsProvider, Message, Provider, Request, ThinkingMode};
-use secrecy::SecretString;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key = std::env::var("DEEPSEEK_API_KEY")?;
-    let provider = CompletionsProvider::deepseek(SecretString::new(api_key.into()));
+    let provider = CompletionsProvider::deepseek(api_key);
 
     let request = Request::builder()
         .model("deepseek-v4-flash")
@@ -196,13 +194,12 @@ async fn run_agent(
 
 ```rust
 use oven_llm::{CompletionsProvider, Message, Provider, ProviderName, Request};
-use secrecy::SecretString;
 use serde_json::json;
 
 let provider = CompletionsProvider::with_base_url(
     "https://gateway.example.com/v1",
     ProviderName::Custom("my-gateway".into()),
-    SecretString::new(api_key.into()),
+    api_key,
 );
 
 let request = Request::builder()

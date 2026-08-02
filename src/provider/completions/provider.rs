@@ -48,7 +48,7 @@ impl CompletionsProvider {
     /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的
     /// `base_url` 与模型元数据；对 `Custom` 或尚不支持的服务商，请改用
     /// [`with_base_url`] 或 [`with_models`]。
-    pub fn new(provider_name: ProviderName, api_key: SecretString) -> Self {
+    pub fn new(provider_name: ProviderName, api_key: impl Into<SecretString>) -> Self {
         match &provider_name {
             ProviderName::OpenAI => Self::openai(api_key),
             ProviderName::DeepSeek => Self::deepseek(api_key),
@@ -80,7 +80,7 @@ impl CompletionsProvider {
     pub fn with_base_url(
         base_url: impl Into<String>,
         provider_name: ProviderName,
-        api_key: SecretString,
+        api_key: impl Into<SecretString>,
     ) -> Self {
         Self::with_models(
             base_url,
@@ -92,10 +92,13 @@ impl CompletionsProvider {
     }
 
     /// 构造一个带静态模型元数据与额外请求头的 provider。
+    ///
+    /// `api_key` 接受 `SecretString`，也接受任何能转换为它的类型（例如
+    /// `String` 或 `&str`）——内部始终以 `SecretString` 存储，drop 时零化。
     pub fn with_models(
         base_url: impl Into<String>,
         provider_name: ProviderName,
-        api_key: SecretString,
+        api_key: impl Into<SecretString>,
         known_models: Vec<ModelInfo>,
         extra_headers: HeaderMap,
     ) -> Self {
@@ -107,7 +110,7 @@ impl CompletionsProvider {
         Self {
             base_url: base_url.into(),
             provider_name,
-            api_key,
+            api_key: api_key.into(),
             extra_headers,
             model_catalog,
             client: isahc::HttpClient::new().expect("isahc HttpClient::new() should succeed"),
@@ -115,7 +118,7 @@ impl CompletionsProvider {
     }
 
     /// DeepSeek 预设：`base_url = https://api.deepseek.com`。
-    pub fn deepseek(api_key: SecretString) -> Self {
+    pub fn deepseek(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
             "https://api.deepseek.com",
             ProviderName::DeepSeek,
@@ -126,7 +129,7 @@ impl CompletionsProvider {
     }
 
     /// Moonshot（Kimi）预设：`base_url = https://api.moonshot.cn/v1`。
-    pub fn moonshot(api_key: SecretString) -> Self {
+    pub fn moonshot(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
             "https://api.moonshot.cn/v1",
             ProviderName::Moonshot,
@@ -137,7 +140,7 @@ impl CompletionsProvider {
     }
 
     /// 智谱 GLM 预设：`base_url = https://open.bigmodel.cn/api/paas/v4`。
-    pub fn zhipu(api_key: SecretString) -> Self {
+    pub fn zhipu(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
             "https://open.bigmodel.cn/api/paas/v4",
             ProviderName::Zhipu,
@@ -152,7 +155,7 @@ impl CompletionsProvider {
     /// `models.rs` 目前没有为 OpenAI 官方提供静态模型列表（其模型迭代速度快，
     /// 硬编码容易过期），因此 `known_models()` 返回空列表；调用方应优先使用
     /// `list_models()` 动态发现，或自行通过 `with_models` 传入。
-    pub fn openai(api_key: SecretString) -> Self {
+    pub fn openai(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
             "https://api.openai.com/v1",
             ProviderName::OpenAI,

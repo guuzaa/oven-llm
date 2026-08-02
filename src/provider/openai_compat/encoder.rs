@@ -18,7 +18,7 @@ use crate::domain::tool::{Tool, ToolChoice};
 
 /// `encode_request` 及其子函数的编码失败原因。
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
-pub enum EncodeError {
+pub enum CompletionsEncodeError {
     /// 消息角色与内容块组合不受支持（例如 `Role::System` 消息中出现非
     /// `Text` 块，或 `Role::User` 消息中出现 `ToolUse` 块）。
     #[error("invalid content block: {0}")]
@@ -40,7 +40,7 @@ pub enum EncodeError {
 pub(crate) fn encode_request(
     req: &Request,
     stream: bool,
-) -> Result<ChatCompletionRequest, EncodeError> {
+) -> Result<ChatCompletionRequest, CompletionsEncodeError> {
     let mut messages = Vec::new();
 
     if let Some(system) = &req.system {
@@ -110,7 +110,10 @@ pub(crate) fn encode_request(
 ///
 /// `Role::User` 消息可能展开为多条 wire 消息（普通内容 + 若干独立的
 /// `tool` 消息），因此该函数接收 `&mut Vec<WireMessage>` 而非返回单条消息。
-fn encode_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), EncodeError> {
+fn encode_message(
+    message: &Message,
+    out: &mut Vec<WireMessage>,
+) -> Result<(), CompletionsEncodeError> {
     match message.role {
         Role::System => out.push(encode_system_message(message)?),
         Role::User => encode_user_message(message, out)?,
@@ -122,13 +125,13 @@ fn encode_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), E
 
 /// 编码一条 `Role::System` 消息：仅允许 `Text` 内容块，其余内容块返回
 /// `EncodeError::InvalidContent`。
-fn encode_system_message(message: &Message) -> Result<WireMessage, EncodeError> {
+fn encode_system_message(message: &Message) -> Result<WireMessage, CompletionsEncodeError> {
     let mut text = String::new();
     for block in &message.content {
         match block {
             ContentBlock::Text { text: t } => text.push_str(t),
             other => {
-                return Err(EncodeError::InvalidContent(format!(
+                return Err(CompletionsEncodeError::InvalidContent(format!(
                     "system message may only contain text blocks, found {other:?}"
                 )));
             }
@@ -147,7 +150,10 @@ fn encode_system_message(message: &Message) -> Result<WireMessage, EncodeError> 
 ///
 /// `ToolUse` 块不允许出现在 `Role::User` 消息中，返回
 /// `EncodeError::InvalidContent`。
-fn encode_user_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), EncodeError> {
+fn encode_user_message(
+    message: &Message,
+    out: &mut Vec<WireMessage>,
+) -> Result<(), CompletionsEncodeError> {
     let mut pending: Vec<&ContentBlock> = Vec::new();
 
     for block in &message.content {
@@ -156,12 +162,12 @@ fn encode_user_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<
                 pending.push(block);
             }
             ContentBlock::Thinking { .. } => {
-                return Err(EncodeError::InvalidContent(
+                return Err(CompletionsEncodeError::InvalidContent(
                     "Thinking block is not allowed in a Role::User message".to_string(),
                 ));
             }
             ContentBlock::ToolUse { .. } => {
-                return Err(EncodeError::InvalidContent(
+                return Err(CompletionsEncodeError::InvalidContent(
                     "ToolUse block is not allowed in a Role::User message".to_string(),
                 ));
             }
@@ -214,13 +220,13 @@ fn encode_tool_result(
     tool_use_id: &str,
     content: &[ContentBlock],
     is_error: bool,
-) -> Result<WireMessage, EncodeError> {
+) -> Result<WireMessage, CompletionsEncodeError> {
     let mut text = String::new();
     for block in content {
         match block {
             ContentBlock::Text { text: t } => text.push_str(t),
             _ => {
-                return Err(EncodeError::UnsupportedToolResultContent(
+                return Err(CompletionsEncodeError::UnsupportedToolResultContent(
                     tool_use_id.to_string(),
                 ));
             }
@@ -241,7 +247,10 @@ fn encode_tool_result(
 
 /// 编码一条 `Role::Tool` 消息：将每个 `ToolResult` 块展开为独立的
 /// `role: "tool"` wire 消息，保持原始顺序。仅允许 `ToolResult` 内容块。
-fn encode_tool_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<(), EncodeError> {
+fn encode_tool_message(
+    message: &Message,
+    out: &mut Vec<WireMessage>,
+) -> Result<(), CompletionsEncodeError> {
     for block in &message.content {
         match block {
             ContentBlock::ToolResult {
@@ -252,7 +261,7 @@ fn encode_tool_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<
                 out.push(encode_tool_result(tool_use_id, content, *is_error)?);
             }
             other => {
-                return Err(EncodeError::InvalidContent(format!(
+                return Err(CompletionsEncodeError::InvalidContent(format!(
                     "Role::Tool message may only contain ToolResult blocks, found {other:?}"
                 )));
             }
@@ -264,7 +273,7 @@ fn encode_tool_message(message: &Message, out: &mut Vec<WireMessage>) -> Result<
 /// 编码一条 `Role::Assistant` 消息：合并 `Text` 块为 `content`，将
 /// `ToolUse` 块转换为 `tool_calls`；其余内容块（`Image`、`ToolResult`）返回
 /// `EncodeError::InvalidContent`。
-fn encode_assistant_message(message: &Message) -> Result<WireMessage, EncodeError> {
+fn encode_assistant_message(message: &Message) -> Result<WireMessage, CompletionsEncodeError> {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
 
@@ -283,7 +292,7 @@ fn encode_assistant_message(message: &Message) -> Result<WireMessage, EncodeErro
                 });
             }
             other => {
-                return Err(EncodeError::InvalidContent(format!(
+                return Err(CompletionsEncodeError::InvalidContent(format!(
                     "assistant message may only contain text and tool_use blocks, found {other:?}"
                 )));
             }
@@ -373,7 +382,7 @@ mod tests {
             }],
         };
         let err = encode_system_message(&message).unwrap_err();
-        assert!(matches!(err, EncodeError::InvalidContent(_)));
+        assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
     }
 
     #[test]
@@ -513,7 +522,7 @@ mod tests {
         let err = encode_user_message(&message, &mut out).unwrap_err();
         assert_eq!(
             err,
-            EncodeError::UnsupportedToolResultContent("call_1".to_string())
+            CompletionsEncodeError::UnsupportedToolResultContent("call_1".to_string())
         );
     }
 
@@ -526,7 +535,7 @@ mod tests {
         }]);
         let mut out = Vec::new();
         let err = encode_user_message(&message, &mut out).unwrap_err();
-        assert!(matches!(err, EncodeError::InvalidContent(_)));
+        assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
     }
 
     #[test]
@@ -588,7 +597,7 @@ mod tests {
             },
         }]);
         let err = encode_assistant_message(&message).unwrap_err();
-        assert!(matches!(err, EncodeError::InvalidContent(_)));
+        assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
     }
 
     #[test]
@@ -599,7 +608,7 @@ mod tests {
             is_error: false,
         }]);
         let err = encode_assistant_message(&message).unwrap_err();
-        assert!(matches!(err, EncodeError::InvalidContent(_)));
+        assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
     }
 
     // --- encode_tool_message (Role::Tool) ---
@@ -634,7 +643,7 @@ mod tests {
         let message = Message::tool(vec![ContentBlock::text("oops")]);
         let mut out = Vec::new();
         let err = encode_tool_message(&message, &mut out).unwrap_err();
-        assert!(matches!(err, EncodeError::InvalidContent(_)));
+        assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
     }
 
     // --- encode_tool_choice (Requirement 3.7) ---

@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use crate::domain::StreamCollectorError;
-use crate::provider::openai_compat::{DecodeError, EncodeError};
+use crate::provider::openai_compat::{CompletionsDecodeError, CompletionsEncodeError};
 use crate::provider::responses::{
     DecodeError as ResponsesDecodeError, EncodeError as ResponsesEncodeError,
 };
@@ -27,9 +27,9 @@ pub enum ProviderError {
     /// HTTP 429。
     #[error("rate limited, retry after {retry_after_ms:?}ms")]
     RateLimit { retry_after_ms: Option<u64> },
-    /// JSON 反序列化失败 / wire 响应解码错误。
-    #[error("decode error")]
-    Decode(#[source] DecodeError),
+    /// Completions API 响应解码失败。
+    #[error("completions decoding error")]
+    CompletionsDecode(#[source] CompletionsDecodeError),
     /// SSE 解析失败 / 流在 `[DONE]` 前终止。
     #[error("stream protocol error")]
     Stream(#[source] StreamCollectorError),
@@ -39,9 +39,9 @@ pub enum ProviderError {
     /// 请求发出前的校验失败。
     #[error("invalid request")]
     InvalidRequest(#[source] ValidationError),
-    /// 请求编码为 wire 格式失败。
-    #[error("encoding error")]
-    Encode(#[source] EncodeError),
+    /// Completions API 响应解码失败。
+    #[error("completions encoding error")]
+    CompletionsEncode(#[source] CompletionsEncodeError),
     /// Responses API 响应解码失败。
     #[error("responses decode error")]
     ResponsesDecode(#[source] ResponsesDecodeError),
@@ -56,15 +56,15 @@ impl From<StreamCollectorError> for ProviderError {
     }
 }
 
-impl From<DecodeError> for ProviderError {
-    fn from(err: DecodeError) -> Self {
-        ProviderError::Decode(err)
+impl From<CompletionsDecodeError> for ProviderError {
+    fn from(err: CompletionsDecodeError) -> Self {
+        ProviderError::CompletionsDecode(err)
     }
 }
 
-impl From<EncodeError> for ProviderError {
-    fn from(err: EncodeError) -> Self {
-        ProviderError::Encode(err)
+impl From<CompletionsEncodeError> for ProviderError {
+    fn from(err: CompletionsEncodeError) -> Self {
+        ProviderError::CompletionsEncode(err)
     }
 }
 
@@ -124,9 +124,9 @@ mod tests {
 
     #[test]
     fn decode_error_display() {
-        let inner = DecodeError::MissingChoice;
-        let err = ProviderError::Decode(inner);
-        assert_eq!(err.to_string(), "decode error");
+        let inner = CompletionsDecodeError::MissingChoice;
+        let err = ProviderError::CompletionsDecode(inner);
+        assert_eq!(err.to_string(), "completions decoding error");
         assert!(err.source().is_some());
     }
 
@@ -148,9 +148,9 @@ mod tests {
 
     #[test]
     fn encode_error_display() {
-        let inner = EncodeError::InvalidContent("bad".to_string());
-        let err = ProviderError::Encode(inner);
-        assert_eq!(err.to_string(), "encoding error");
+        let inner = CompletionsEncodeError::InvalidContent("bad".to_string());
+        let err = ProviderError::CompletionsEncode(inner);
+        assert_eq!(err.to_string(), "completions encoding error");
         assert!(err.source().is_some());
     }
 
@@ -175,13 +175,13 @@ mod tests {
     #[test]
     fn error_chain_preserves_source() {
         let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
-        let decode_inner = DecodeError::InvalidToolArguments {
+        let decode_inner = CompletionsDecodeError::InvalidToolArguments {
             id: "call_1".to_string(),
             source: json_err,
         };
-        let err = ProviderError::Decode(decode_inner);
+        let err = ProviderError::CompletionsDecode(decode_inner);
 
-        assert_eq!(err.to_string(), "decode error");
+        assert_eq!(err.to_string(), "completions decoding error");
         let source = err.source().unwrap();
         assert!(
             source

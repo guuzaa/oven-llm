@@ -34,9 +34,8 @@ use crate::provider::{Provider, ProviderError};
 /// OpenAI Chat Completions 兼容协议的通用 `Provider` 实现。
 ///
 /// 通过 `base_url` 区分具体服务商（DeepSeek / Moonshot / 智谱 / OpenAI 官方
-/// 等），wire 格式（`types.rs`/`encoder.rs`/`decoder.rs`）在这些服务商之间
-/// 完全共享。
-pub struct OpenAICompatProvider {
+/// 等）。
+pub struct CompletionsProvider {
     base_url: String,
     provider_name: ProviderName,
     api_key: SecretString,
@@ -45,7 +44,7 @@ pub struct OpenAICompatProvider {
     client: isahc::HttpClient,
 }
 
-impl OpenAICompatProvider {
+impl CompletionsProvider {
     /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的
     /// `base_url` 与模型元数据；对 `Custom` 或尚不支持的服务商，请改用
     /// [`with_base_url`] 或 [`with_models`]。
@@ -174,7 +173,9 @@ impl OpenAICompatProvider {
         let wire = encoder::encode_request(req, stream)?;
 
         let mut body = serde_json::to_value(wire).map_err(|err| {
-            ProviderError::Encode(super::encoder::EncodeError::InvalidContent(err.to_string()))
+            ProviderError::CompletionsEncode(
+                super::encoder::CompletionsEncodeError::InvalidContent(err.to_string()),
+            )
         })?;
 
         if !req.provider_options.is_empty() {
@@ -205,7 +206,9 @@ impl OpenAICompatProvider {
         body: &serde_json::Value,
     ) -> Result<isahc::Response<isahc::AsyncBody>, ProviderError> {
         let body_bytes = serde_json::to_vec(body).map_err(|e| {
-            ProviderError::Encode(super::encoder::EncodeError::InvalidContent(e.to_string()))
+            ProviderError::CompletionsEncode(
+                super::encoder::CompletionsEncodeError::InvalidContent(e.to_string()),
+            )
         })?;
 
         let headers = http::build_headers(&self.api_key, &self.extra_headers);
@@ -215,7 +218,7 @@ impl OpenAICompatProvider {
 }
 
 #[async_trait]
-impl Provider for OpenAICompatProvider {
+impl Provider for CompletionsProvider {
     /// 发送一次非流式请求（Requirement 6.1：强制 `stream = false`）。
     async fn complete(&self, req: &Request) -> Result<Response, ProviderError> {
         self.validate_known_model(req, false)?;
@@ -223,8 +226,9 @@ impl Provider for OpenAICompatProvider {
         let mut response = self.post_chat_completions(&body).await?;
 
         let body_bytes = response.bytes().await?;
-        let wire: ChatCompletionResponse = serde_json::from_slice(&body_bytes)
-            .map_err(|e| ProviderError::Decode(super::decoder::DecodeError::Json(e)))?;
+        let wire: ChatCompletionResponse = serde_json::from_slice(&body_bytes).map_err(|e| {
+            ProviderError::CompletionsDecode(super::decoder::CompletionsDecodeError::Json(e))
+        })?;
 
         decoder::decode_response(wire).map_err(ProviderError::from)
     }
@@ -266,7 +270,7 @@ impl Provider for OpenAICompatProvider {
                             }
                         }
                         Err(err) => {
-                            yield Err(ProviderError::Decode(err));
+                            yield Err(ProviderError::CompletionsDecode(err));
                         }
                     }
                     return;
@@ -275,7 +279,7 @@ impl Provider for OpenAICompatProvider {
                 let chunk: ChatCompletionChunk = match serde_json::from_str(&event.data) {
                     Ok(chunk) => chunk,
                     Err(err) => {
-                        yield Err(ProviderError::Decode(super::decoder::DecodeError::Json(err)));
+                        yield Err(ProviderError::CompletionsDecode(super::decoder::CompletionsDecodeError::Json(err)));
                         return;
                     }
                 };
@@ -287,7 +291,7 @@ impl Provider for OpenAICompatProvider {
                         }
                     }
                     Err(err) => {
-                        yield Err(ProviderError::Decode(err));
+                        yield Err(ProviderError::CompletionsDecode(err));
                         return;
                     }
                 }
@@ -328,7 +332,7 @@ impl Provider for OpenAICompatProvider {
             &headers,
             &self.base_url,
             &self.provider_name,
-            |e| ProviderError::Decode(super::decoder::DecodeError::Json(e)),
+            |e| ProviderError::CompletionsDecode(super::decoder::CompletionsDecodeError::Json(e)),
         )
         .await
     }
@@ -359,7 +363,7 @@ mod tests {
 
     #[test]
     fn new_sets_base_url_and_provider_name() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -374,7 +378,7 @@ mod tests {
 
     #[test]
     fn deepseek_preset_has_correct_base_url_and_models() {
-        let provider = OpenAICompatProvider::deepseek(api_key("k"));
+        let provider = CompletionsProvider::deepseek(api_key("k"));
         assert_eq!(provider.base_url, "https://api.deepseek.com");
         assert_eq!(provider.provider_name, ProviderName::DeepSeek);
         assert_eq!(provider.known_models().len(), deepseek_models().len());
@@ -382,7 +386,7 @@ mod tests {
 
     #[test]
     fn moonshot_preset_has_correct_base_url_and_models() {
-        let provider = OpenAICompatProvider::moonshot(api_key("k"));
+        let provider = CompletionsProvider::moonshot(api_key("k"));
         assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
         assert_eq!(provider.provider_name, ProviderName::Moonshot);
         assert_eq!(provider.known_models().len(), moonshot_models().len());
@@ -390,7 +394,7 @@ mod tests {
 
     #[test]
     fn zhipu_preset_has_correct_base_url_and_models() {
-        let provider = OpenAICompatProvider::zhipu(api_key("k"));
+        let provider = CompletionsProvider::zhipu(api_key("k"));
         assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
         assert_eq!(provider.provider_name, ProviderName::Zhipu);
         assert_eq!(provider.known_models().len(), zhipu_models().len());
@@ -398,7 +402,7 @@ mod tests {
 
     #[test]
     fn openai_preset_has_correct_base_url_and_empty_models() {
-        let provider = OpenAICompatProvider::openai(api_key("k"));
+        let provider = CompletionsProvider::openai(api_key("k"));
         assert_eq!(provider.base_url, "https://api.openai.com/v1");
         assert_eq!(provider.provider_name, ProviderName::OpenAI);
         assert!(provider.known_models().is_empty());
@@ -408,14 +412,14 @@ mod tests {
 
     #[test]
     fn new_dispatches_openai() {
-        let provider = OpenAICompatProvider::new(ProviderName::OpenAI, api_key("k"));
+        let provider = CompletionsProvider::new(ProviderName::OpenAI, api_key("k"));
         assert_eq!(provider.base_url, "https://api.openai.com/v1");
         assert_eq!(provider.provider_name, ProviderName::OpenAI);
     }
 
     #[test]
     fn new_dispatches_deepseek() {
-        let provider = OpenAICompatProvider::new(ProviderName::DeepSeek, api_key("k"));
+        let provider = CompletionsProvider::new(ProviderName::DeepSeek, api_key("k"));
         assert_eq!(provider.base_url, "https://api.deepseek.com");
         assert_eq!(provider.provider_name, ProviderName::DeepSeek);
         assert_eq!(provider.known_models().len(), deepseek_models().len());
@@ -423,7 +427,7 @@ mod tests {
 
     #[test]
     fn new_dispatches_moonshot() {
-        let provider = OpenAICompatProvider::new(ProviderName::Moonshot, api_key("k"));
+        let provider = CompletionsProvider::new(ProviderName::Moonshot, api_key("k"));
         assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
         assert_eq!(provider.provider_name, ProviderName::Moonshot);
         assert_eq!(provider.known_models().len(), moonshot_models().len());
@@ -431,7 +435,7 @@ mod tests {
 
     #[test]
     fn new_dispatches_zhipu() {
-        let provider = OpenAICompatProvider::new(ProviderName::Zhipu, api_key("k"));
+        let provider = CompletionsProvider::new(ProviderName::Zhipu, api_key("k"));
         assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
         assert_eq!(provider.provider_name, ProviderName::Zhipu);
         assert_eq!(provider.known_models().len(), zhipu_models().len());
@@ -440,26 +444,26 @@ mod tests {
     #[test]
     #[should_panic(expected = "Anthropic")]
     fn new_panics_on_anthropic() {
-        let _ = OpenAICompatProvider::new(ProviderName::Anthropic, api_key("k"));
+        let _ = CompletionsProvider::new(ProviderName::Anthropic, api_key("k"));
     }
 
     #[test]
     #[should_panic(expected = "has no preset")]
     fn new_panics_on_grok() {
-        let _ = OpenAICompatProvider::new(ProviderName::Grok, api_key("k"));
+        let _ = CompletionsProvider::new(ProviderName::Grok, api_key("k"));
     }
 
     #[test]
     #[should_panic(expected = "cannot dispatch")]
     fn new_panics_on_custom() {
-        let _ = OpenAICompatProvider::new(ProviderName::Custom("example".into()), api_key("k"));
+        let _ = CompletionsProvider::new(ProviderName::Custom("example".into()), api_key("k"));
     }
 
     // --- build_headers ---
 
     #[test]
     fn build_headers_includes_authorization_and_content_type() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("secret-token"),
@@ -476,7 +480,7 @@ mod tests {
             HeaderName::from_static("x-custom"),
             HeaderValue::from_static("value"),
         );
-        let provider = OpenAICompatProvider::with_models(
+        let provider = CompletionsProvider::with_models(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -491,7 +495,7 @@ mod tests {
 
     #[test]
     fn endpoint_joins_base_url_without_trailing_slash() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -504,7 +508,7 @@ mod tests {
 
     #[test]
     fn endpoint_handles_trailing_and_leading_slashes() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com/",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -519,7 +523,7 @@ mod tests {
 
     #[test]
     fn build_body_with_empty_provider_options_has_no_extra_fields() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -533,7 +537,7 @@ mod tests {
 
     #[test]
     fn build_body_merges_provider_options() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -546,7 +550,7 @@ mod tests {
 
     #[test]
     fn build_body_provider_options_override_standard_field() {
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             "https://example.com",
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -570,7 +574,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -591,7 +595,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -609,7 +613,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -630,7 +634,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -665,7 +669,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -686,7 +690,7 @@ mod tests {
     #[test]
     fn known_models_returns_configured_list() {
         let mut models = deepseek_models();
-        let provider = OpenAICompatProvider::with_models(
+        let provider = CompletionsProvider::with_models(
             "https://example.com",
             ProviderName::DeepSeek,
             api_key("k"),
@@ -715,7 +719,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -740,7 +744,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -769,7 +773,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -804,7 +808,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),
@@ -841,7 +845,7 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let provider = OpenAICompatProvider::with_base_url(
+        let provider = CompletionsProvider::with_base_url(
             mock_server.uri(),
             ProviderName::Custom("example".into()),
             api_key("k"),

@@ -15,7 +15,7 @@ use std::{
 
 use futures::StreamExt;
 use oven_llm::{
-    ContentBlock, Delta, Message, OpenAICompatProvider, Provider, Request, StopReason,
+    CompletionsProvider, ContentBlock, Delta, Message, Provider, Request, StopReason,
     StreamCollector, StreamEvent, Tool,
 };
 use secrecy::SecretString;
@@ -30,7 +30,7 @@ async fn main() -> ExampleResult<()> {
     let workspace_root = coding_workspace_root()?;
     let task = coding_task();
     let api_key = env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = OpenAICompatProvider::deepseek(SecretString::new(api_key.into()));
+    let provider = CompletionsProvider::deepseek(SecretString::new(api_key.into()));
 
     println!("coding workspace: {}", workspace_root.display());
     println!("task: {task}");

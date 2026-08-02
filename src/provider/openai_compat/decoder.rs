@@ -17,7 +17,7 @@ use crate::domain::stream::{Delta, StreamEvent};
 
 /// `decode_response`（及后续流式 `StreamDecoder`）的解码失败原因。
 #[derive(Debug, Error)]
-pub enum DecodeError {
+pub enum CompletionsDecodeError {
     /// wire 响应的 `choices` 字段为空（Requirement 4.1）。
     #[error("response has no choices")]
     MissingChoice,
@@ -67,9 +67,11 @@ pub(crate) fn map_stop_reason(finish_reason: &str) -> Option<StopReason> {
 ///   `DecodeError::InvalidToolArguments`
 /// - `usage` 字段（若存在）转换为 `Usage { input_tokens, output_tokens }`
 /// - `finish_reason`（若存在）通过 `map_stop_reason` 映射为 `StopReason`
-pub(crate) fn decode_response(wire: ChatCompletionResponse) -> Result<Response, DecodeError> {
+pub(crate) fn decode_response(
+    wire: ChatCompletionResponse,
+) -> Result<Response, CompletionsDecodeError> {
     if wire.choices.is_empty() {
-        return Err(DecodeError::MissingChoice);
+        return Err(CompletionsDecodeError::MissingChoice);
     }
 
     // 只处理第一个 choice，忽略多余的 choice。
@@ -80,7 +82,7 @@ pub(crate) fn decode_response(wire: ChatCompletionResponse) -> Result<Response, 
         .expect("checked non-empty above");
 
     if choice.message.role != "assistant" {
-        return Err(DecodeError::UnexpectedRole {
+        return Err(CompletionsDecodeError::UnexpectedRole {
             role: choice.message.role,
         });
     }
@@ -119,10 +121,12 @@ pub(crate) fn decode_response(wire: ChatCompletionResponse) -> Result<Response, 
 /// 将一个响应侧的 `WireResponseToolCall` 解码为 `ContentBlock::ToolUse`，
 /// 解析 `arguments` JSON 字符串失败时返回
 /// `DecodeError::InvalidToolArguments`。
-fn decode_tool_call(tool_call: WireResponseToolCall) -> Result<ContentBlock, DecodeError> {
+fn decode_tool_call(
+    tool_call: WireResponseToolCall,
+) -> Result<ContentBlock, CompletionsDecodeError> {
     let input: serde_json::Value =
         serde_json::from_str(&tool_call.function.arguments).map_err(|source| {
-            DecodeError::InvalidToolArguments {
+            CompletionsDecodeError::InvalidToolArguments {
                 id: tool_call.id.clone(),
                 source,
             }
@@ -217,9 +221,9 @@ impl StreamDecoder {
     pub(crate) fn decode_chunk(
         &mut self,
         chunk: ChatCompletionChunk,
-    ) -> Result<Vec<StreamEvent>, DecodeError> {
+    ) -> Result<Vec<StreamEvent>, CompletionsDecodeError> {
         if self.phase == StreamPhase::Stopped {
-            return Err(DecodeError::DataAfterStop);
+            return Err(CompletionsDecodeError::DataAfterStop);
         }
 
         if self.phase == StreamPhase::AwaitingDone {
@@ -227,7 +231,7 @@ impl StreamDecoder {
                 // 仅携带 usage 的收尾 chunk，容忍并忽略。
                 return Ok(Vec::new());
             }
-            return Err(DecodeError::DataAfterFinish);
+            return Err(CompletionsDecodeError::DataAfterFinish);
         }
 
         let mut events = Vec::new();
@@ -268,10 +272,10 @@ impl StreamDecoder {
     /// - `Streaming` 阶段（流结束前从未收到 `finish_reason`）：补齐所有未
     ///   关闭块的 `ContentBlockStop`、一个 `stop_reason`/`usage` 均为 `None`
     ///   的 `MessageDelta`，再产出 `MessageStop`
-    pub(crate) fn finish(&mut self) -> Result<Vec<StreamEvent>, DecodeError> {
+    pub(crate) fn finish(&mut self) -> Result<Vec<StreamEvent>, CompletionsDecodeError> {
         match self.phase {
-            StreamPhase::Initial => Err(DecodeError::MissingChoice),
-            StreamPhase::Stopped => Err(DecodeError::DataAfterStop),
+            StreamPhase::Initial => Err(CompletionsDecodeError::MissingChoice),
+            StreamPhase::Stopped => Err(CompletionsDecodeError::DataAfterStop),
             StreamPhase::AwaitingDone => {
                 self.phase = StreamPhase::Stopped;
                 Ok(vec![StreamEvent::MessageStop])
@@ -478,7 +482,7 @@ mod tests {
     fn empty_choices_returns_missing_choice() {
         let wire = wire_response(vec![], None);
         let err = decode_response(wire).unwrap_err();
-        assert!(matches!(err, DecodeError::MissingChoice));
+        assert!(matches!(err, CompletionsDecodeError::MissingChoice));
     }
 
     #[test]
@@ -512,7 +516,7 @@ mod tests {
         let wire = wire_response(vec![choice(message, Some("stop"))], None);
         let err = decode_response(wire).unwrap_err();
         match err {
-            DecodeError::UnexpectedRole { role } => assert_eq!(role, "system"),
+            CompletionsDecodeError::UnexpectedRole { role } => assert_eq!(role, "system"),
             other => panic!("expected UnexpectedRole, got {other:?}"),
         }
     }
@@ -537,7 +541,7 @@ mod tests {
         let wire = wire_response(vec![choice(message, Some("tool_calls"))], None);
         let err = decode_response(wire).unwrap_err();
         match err {
-            DecodeError::InvalidToolArguments { id, .. } => assert_eq!(id, "call_1"),
+            CompletionsDecodeError::InvalidToolArguments { id, .. } => assert_eq!(id, "call_1"),
             other => panic!("expected InvalidToolArguments, got {other:?}"),
         }
     }
@@ -1047,7 +1051,7 @@ mod tests {
         let err = decoder
             .decode_chunk(stream_chunk(vec![text_delta_choice("more", None)], None))
             .unwrap_err();
-        assert!(matches!(err, DecodeError::DataAfterFinish));
+        assert!(matches!(err, CompletionsDecodeError::DataAfterFinish));
     }
 
     #[test]
@@ -1118,7 +1122,7 @@ mod tests {
     fn finish_from_initial_returns_missing_choice() {
         let mut decoder = StreamDecoder::new();
         let err = decoder.finish().unwrap_err();
-        assert!(matches!(err, DecodeError::MissingChoice));
+        assert!(matches!(err, CompletionsDecodeError::MissingChoice));
     }
 
     // --- Stopped rejects everything (Requirement 5.7) ---
@@ -1137,9 +1141,9 @@ mod tests {
         let err1 = decoder
             .decode_chunk(stream_chunk(vec![text_delta_choice("more", None)], None))
             .unwrap_err();
-        assert!(matches!(err1, DecodeError::DataAfterStop));
+        assert!(matches!(err1, CompletionsDecodeError::DataAfterStop));
 
         let err2 = decoder.finish().unwrap_err();
-        assert!(matches!(err2, DecodeError::DataAfterStop));
+        assert!(matches!(err2, CompletionsDecodeError::DataAfterStop));
     }
 }

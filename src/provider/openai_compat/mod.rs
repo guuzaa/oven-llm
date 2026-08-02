@@ -7,7 +7,7 @@ pub mod models;
 pub mod provider;
 pub mod types;
 
-pub use decoder::DecodeError;
-pub use encoder::EncodeError;
+pub use decoder::CompletionsDecodeError;
+pub use encoder::CompletionsEncodeError;
 pub use models::{all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models};
-pub use provider::OpenAICompatProvider;
+pub use provider::CompletionsProvider;

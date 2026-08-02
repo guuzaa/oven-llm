@@ -11,7 +11,7 @@ pub mod validate;
 pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
 pub use openai_compat::{
-    OpenAICompatProvider, all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models,
+    CompletionsProvider, all_openai_compat_models, deepseek_models, moonshot_models, zhipu_models,
 };
 pub use registry::ModelRegistry;
 pub use responses::ResponsesProvider;

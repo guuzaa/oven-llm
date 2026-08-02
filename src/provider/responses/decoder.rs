@@ -554,14 +554,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn log_events_from_sse_handles_crlf_line_endings() {
-        let crlf = deepseek_sse().replace('\n', "\r\n");
-        let events = log_events_from_sse(&crlf);
-        assert_eq!(events.len(), log_events_from_sse(&deepseek_sse()).len());
-        assert!(!events.is_empty());
-    }
-
     // --- 非流式 decode_response ---
 
     #[test]

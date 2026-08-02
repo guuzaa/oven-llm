@@ -18,9 +18,7 @@
 use std::io::Write;
 use std::{io, time::Duration};
 
-use oven_llm::{
-    Delta, Message, OpenAICompatProvider, Provider, Request, StreamEvent, ThinkingMode,
-};
+use oven_llm::{CompletionsProvider, Delta, Message, Provider, Request, StreamEvent, ThinkingMode};
 use secrecy::SecretString;
 
 async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
@@ -93,7 +91,7 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
 async fn main() {
     // 1. 创建 DeepSeek provider（从环境变量读取 API key，未设置时使用占位值）。
     let api_key = std::env::var("ZHIPU_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = Box::new(OpenAICompatProvider::zhipu(SecretString::new(
+    let provider = Box::new(CompletionsProvider::zhipu(SecretString::new(
         api_key.into(),
     )));
 

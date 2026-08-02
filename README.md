@@ -7,10 +7,14 @@
 A Rust library for calling LLM providers through one unified, async runtime-agnostic API.
 
 `oven-llm` exposes a single `Provider` trait, a provider-agnostic domain model (`Request` /
-`Response` / `StreamEvent` / `Message` / `Tool`), and two production-ready wire protocol
-implementations — the OpenAI Chat Completions compatible protocol and the OpenAI Responses API —
-with built-in presets for DeepSeek, Moonshot (Kimi), Zhipu GLM, xAI Grok, and OpenAI itself.
-Switch vendors by changing one constructor call; application code never touches wire formats.
+`Response` / `StreamEvent` / `Message` / `Tool`), and two wire protocol implementations — the
+OpenAI Chat Completions compatible protocol and the OpenAI Responses API — with built-in presets
+for DeepSeek, Moonshot (Kimi), Zhipu GLM, xAI Grok, and OpenAI itself. Switch vendors by
+changing one constructor call; application code never touches wire formats.
+
+> **Status: not production-ready.** This crate is under active development. The public API is
+> still evolving and may change without notice, and there are no stability or correctness
+> guarantees yet. Please evaluate it before using it in production workloads.
 
 ## Features
 

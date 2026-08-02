@@ -2,7 +2,7 @@
 name = "oven-llm"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 description = "A Rust library for calling LLM providers with a unified API."
 authors = ["Jowell Young <guza@duck.com>"]

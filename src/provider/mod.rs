@@ -1,5 +1,6 @@
 //! `provider` 层：`Provider` trait、错误类型与模型能力信息。
 
+mod builder;
 mod completions;
 mod error;
 pub(crate) mod http;
@@ -8,6 +9,7 @@ mod registry;
 mod responses;
 pub mod validate;
 
+pub use builder::ProviderBuilder;
 pub use completions::CompletionsProvider;
 pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
@@ -55,6 +57,17 @@ pub enum ProviderName {
     Anthropic,
     Grok,
     Custom(String),
+}
+
+/// Provider 的协议种类，用于统一构造入口（[`ProviderBuilder`]）的派发。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    /// OpenAI Chat Completions 兼容协议（`CompletionsProvider`）。
+    Completions,
+    /// OpenAI Responses API（`ResponsesProvider`）。
+    Responses,
+    /// Anthropic Messages API (Not Implemented yet)
+    Messages,
 }
 
 #[cfg(test)]

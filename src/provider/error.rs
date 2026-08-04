@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+use super::{ProviderKind, ProviderName};
 use crate::domain::StreamCollectorError;
 use crate::provider::completions::{CompletionsDecodeError, CompletionsEncodeError};
 use crate::provider::responses::{
@@ -48,6 +49,15 @@ pub enum ProviderError {
     /// Responses API 请求编码失败。
     #[error("responses encoding error")]
     ResponsesEncode(#[source] ResponsesEncodeError),
+    /// 统一构造入口（`ProviderBuilder`）遇到不支持的 kind/name 组合。
+    #[error("unsupported provider combination: {kind:?} + {name:?}")]
+    UnsupportedProvider {
+        kind: ProviderKind,
+        name: ProviderName,
+    },
+    /// 统一构造入口（`ProviderBuilder`）配置缺失或相互冲突。
+    #[error("invalid provider config: {0}")]
+    InvalidProviderConfig(String),
 }
 
 impl From<StreamCollectorError> for ProviderError {

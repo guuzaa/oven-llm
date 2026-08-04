@@ -44,6 +44,13 @@ pub struct ResponsesProvider {
     client: isahc::HttpClient,
 }
 
+/// OpenAI 官方 Responses base_url。
+pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+/// DeepSeek Responses base_url。
+pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+/// xAI Grok Responses base_url。
+pub(crate) const GROK_BASE_URL: &str = "https://api.x.ai/v1";
+
 impl ResponsesProvider {
     /// 通过 `ProviderName` 派发构造。已知的 Responses API 服务商会自动填入
     /// 对应的 `base_url` 与模型元数据；对其他服务商，请改用 [`with_base_url`]
@@ -121,7 +128,7 @@ impl ResponsesProvider {
     /// Responses API）。
     pub fn deepseek(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.deepseek.com",
+            DEEPSEEK_BASE_URL,
             ProviderName::DeepSeek,
             api_key,
             deepseek_models(),
@@ -133,7 +140,7 @@ impl ResponsesProvider {
     /// `grok-build-0.1`。
     pub fn grok(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.x.ai/v1",
+            GROK_BASE_URL,
             ProviderName::Grok,
             api_key,
             grok_models(),
@@ -146,7 +153,7 @@ impl ResponsesProvider {
     /// 或自行通过 `with_models` 传入）。
     pub fn openai(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.openai.com/v1",
+            OPENAI_BASE_URL,
             ProviderName::OpenAI,
             api_key,
             Vec::new(),

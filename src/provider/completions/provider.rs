@@ -44,6 +44,15 @@ pub struct CompletionsProvider {
     client: isahc::HttpClient,
 }
 
+/// OpenAI 官方 Chat Completions base_url。
+pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+/// DeepSeek Chat Completions base_url。
+pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+/// Moonshot（Kimi）Chat Completions base_url。
+pub(crate) const MOONSHOT_BASE_URL: &str = "https://api.moonshot.cn/v1";
+/// 智谱 GLM Chat Completions base_url。
+pub(crate) const ZHIPU_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+
 impl CompletionsProvider {
     /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的
     /// `base_url` 与模型元数据；对 `Custom` 或尚不支持的服务商，请改用
@@ -120,7 +129,7 @@ impl CompletionsProvider {
     /// DeepSeek 预设：`base_url = https://api.deepseek.com`。
     pub fn deepseek(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.deepseek.com",
+            DEEPSEEK_BASE_URL,
             ProviderName::DeepSeek,
             api_key,
             deepseek_models(),
@@ -131,7 +140,7 @@ impl CompletionsProvider {
     /// Moonshot（Kimi）预设：`base_url = https://api.moonshot.cn/v1`。
     pub fn moonshot(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.moonshot.cn/v1",
+            MOONSHOT_BASE_URL,
             ProviderName::Moonshot,
             api_key,
             moonshot_models(),
@@ -142,7 +151,7 @@ impl CompletionsProvider {
     /// 智谱 GLM 预设：`base_url = https://open.bigmodel.cn/api/paas/v4`。
     pub fn zhipu(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://open.bigmodel.cn/api/paas/v4",
+            ZHIPU_BASE_URL,
             ProviderName::Zhipu,
             api_key,
             zhipu_models(),
@@ -157,7 +166,7 @@ impl CompletionsProvider {
     /// `list_models()` 动态发现，或自行通过 `with_models` 传入。
     pub fn openai(api_key: impl Into<SecretString>) -> Self {
         Self::with_models(
-            "https://api.openai.com/v1",
+            OPENAI_BASE_URL,
             ProviderName::OpenAI,
             api_key,
             Vec::new(),

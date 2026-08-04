@@ -15,7 +15,7 @@ use std::{
 
 use futures::StreamExt;
 use oven_llm::{
-    CompletionsProvider, ContentBlock, Delta, Message, Provider, Request, StopReason,
+    ContentBlock, Delta, Message, Provider, ProviderBuilder, ProviderName, Request, StopReason,
     StreamCollector, StreamEvent, Tool,
 };
 use serde_json::{Value, json};
@@ -29,7 +29,10 @@ async fn main() -> ExampleResult<()> {
     let workspace_root = coding_workspace_root()?;
     let task = coding_task();
     let api_key = env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = CompletionsProvider::deepseek(api_key);
+    let provider = ProviderBuilder::completions()
+        .provider_name(ProviderName::DeepSeek)
+        .api_key(api_key)
+        .build()?;
 
     println!("coding workspace: {}", workspace_root.display());
     println!("task: {task}");
@@ -50,7 +53,7 @@ async fn main() -> ExampleResult<()> {
         .expect("model is set");
 
     loop {
-        let response = collect_streamed_response(&provider, &request).await?;
+        let response = collect_streamed_response(provider.as_ref(), &request).await?;
         let requests_tools =
             response.stop_reason == Some(StopReason::ToolUse) && response.has_tool_use();
 

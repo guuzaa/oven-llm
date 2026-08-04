@@ -21,7 +21,7 @@ use std::io::{self, Write};
 
 use futures::StreamExt;
 use oven_llm::{
-    ContentBlock, Delta, Message, Provider, Request, ResponsesProvider, StopReason,
+    ContentBlock, Delta, Message, Provider, ProviderBuilder, ProviderName, Request, StopReason,
     StreamCollector, StreamEvent, Tool,
 };
 use serde_json::{Value, json};
@@ -32,7 +32,11 @@ async fn main() {
     //    或 `with_base_url` / `with_models` 自定义服务商）。
     let api_key =
         std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = ResponsesProvider::deepseek(api_key);
+    let provider = ProviderBuilder::responses()
+        .provider_name(ProviderName::DeepSeek)
+        .api_key(api_key)
+        .build()
+        .expect("DeepSeek responses API");
     println!("provider: {:?}", provider.provider_name());
 
     // 2. 动态模型发现。可能因缺少真实 API key/网络而失败，打印错误后继续。
@@ -83,7 +87,7 @@ async fn main() {
     // 4. 流式 stream + 工具调用循环。默认 tool_choice 为 Auto（模型自行决定
     //    是否调用工具）；也可通过 `.tool_choice(ToolChoice::Tool("get_weather"))`
     //    强制指定必须调用的工具。
-    run_tool_loop(&provider).await;
+    run_tool_loop(provider.as_ref()).await;
 }
 
 /// 消费一次流式响应并实时打印增量（thinking 灰色、text 正常色、工具参数静默

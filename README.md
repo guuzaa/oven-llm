@@ -74,11 +74,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .thinking(ThinkingMode::Enabled)
         .build()?;
 
-    let response = provider.complete(&request).await?;
-    println!("{}", response.text());
-    Ok(())
+let response = provider.complete(&request).await?;
+println!("{}", response.text());
+Ok(())
 }
 ```
+
+### Unified provider creation (`ProviderBuilder`)
+
+Instead of calling `CompletionsProvider::new` / `ResponsesProvider::new` separately, create any
+provider through one entry point — `ProviderKind` + `ProviderName` + API key:
+
+```rust
+use oven_llm::{Provider, ProviderBuilder, ProviderKind, ProviderName};
+
+// Option 1
+let provider = ProviderBuilder::new(ProviderKind::Responses)          // or ProviderKind::Completions
+    .provider_name(ProviderName::DeepSeek)
+    .api_key(api_key)
+    .build()?;                              // Box<dyn Provider>
+
+// Option 2
+let provider = ProviderBuilder::completions()          // or responses()
+    .provider_name(ProviderName::DeepSeek)
+    .api_key(api_key)
+    .build()?;                              // Box<dyn Provider>
+
+let response = provider.complete(&request).await?;
+```
+
+`build()` returns a `Result`, so unsupported kind/name combinations (e.g. Responses + Moonshot)
+surface as a typed error instead of panicking. Known presets keep their base URL and static model
+catalog, so `.known_models(...)` / `.add_model(...)` / `.extra_headers(...)` can augment them
+without a `base_url`. Custom gateways work too: add `.base_url(...)` (optionally with
+`.extra_headers(...)` / `.known_models(...)` / `.add_model(...)`), and any `ProviderName`,
+including `Custom(...)`, is accepted.
 
 ## Supported protocols & providers
 

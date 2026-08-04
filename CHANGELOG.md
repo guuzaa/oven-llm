@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1] - 2026-08-03
+### Added
+- Unified provider creation: `ProviderBuilder` + `ProviderKind` dispatch to
+  `CompletionsProvider` / `ResponsesProvider` from one entry point
+  (`kind` + `provider_name` + `api_key`, optional `base_url` / `extra_headers` /
+  `known_models`), returning `Result<Box<dyn Provider>>`.
+- `ProviderError::UnsupportedProvider` and `ProviderError::InvalidProviderConfig`
+  for builder failures (the unified path returns errors instead of panicking).
+- `ProviderBuilder::add_model` to append a single `ModelInfo` to the builder's
+  `known_models` list (complements the bulk `known_models(...)` setter).
+- `ProviderBuilder` builds known presets from their preset base URL and static
+  model catalog, so `known_models` / `add_model` / `extra_headers` can augment
+  presets without requiring a `base_url`.
+
 ## [0.2.0] - 2026-08-02
 ### Added
 - OpenAI Responses API support: `ResponsesProvider` with DeepSeek / Grok / OpenAI

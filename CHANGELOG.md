@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.2] - 2026-08-07
+### Added
+- `ProviderName` now uses a hand-written Serialize/Deserialize impl:
+  - known providers serialize as lowercase strings ("openai", "deepseek", ...)
+  - Custom serializes as "custom(<name>)" with the name normalized to lowercase
+  - deserialization lowercases the whole input, so it is case-insensitive
+  - unknown strings fall back to Custom for backward compatibility
+- `ProviderKind` derives Serialize/Deserialize with lowercase variant names.
+
 ## [0.2.1] - 2026-08-03
 ### Added
 - Unified provider creation: `ProviderBuilder` + `ProviderKind` dispatch to

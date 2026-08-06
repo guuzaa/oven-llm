@@ -15,6 +15,7 @@ pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
 pub use registry::ModelRegistry;
 pub use responses::ResponsesProvider;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use validate::{ValidationError, estimate_input_tokens, validate_request};
 
 use async_trait::async_trait;
@@ -59,8 +60,46 @@ pub enum ProviderName {
     Custom(String),
 }
 
+impl Serialize for ProviderName {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            ProviderName::OpenAI => serializer.serialize_str("openai"),
+            ProviderName::DeepSeek => serializer.serialize_str("deepseek"),
+            ProviderName::Moonshot => serializer.serialize_str("moonshot"),
+            ProviderName::Zhipu => serializer.serialize_str("zhipu"),
+            ProviderName::Anthropic => serializer.serialize_str("anthropic"),
+            ProviderName::Grok => serializer.serialize_str("grok"),
+            ProviderName::Custom(name) => {
+                serializer.serialize_str(&format!("custom({})", name.to_lowercase()))
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProviderName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?.to_lowercase();
+        Ok(match raw.as_str() {
+            "openai" => ProviderName::OpenAI,
+            "deepseek" => ProviderName::DeepSeek,
+            "moonshot" => ProviderName::Moonshot,
+            "zhipu" => ProviderName::Zhipu,
+            "anthropic" => ProviderName::Anthropic,
+            "grok" => ProviderName::Grok,
+            _ => match raw
+                .strip_prefix("custom(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                Some(name) => ProviderName::Custom(name.to_string()),
+                None => ProviderName::Custom(raw),
+            },
+        })
+    }
+}
+
 /// Provider 的协议种类，用于统一构造入口（[`ProviderBuilder`]）的派发。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     /// OpenAI Chat Completions 兼容协议（`CompletionsProvider`）。
     Completions,
@@ -109,5 +148,83 @@ mod tests {
         let provider = StubProvider;
         let models = provider.list_models().await.unwrap();
         assert!(models.is_empty());
+    }
+
+    #[test]
+    fn provider_name_serde_roundtrip() {
+        let names = [
+            ProviderName::OpenAI,
+            ProviderName::DeepSeek,
+            ProviderName::Moonshot,
+            ProviderName::Zhipu,
+            ProviderName::Anthropic,
+            ProviderName::Grok,
+            ProviderName::Custom("my-provider".into()),
+        ];
+
+        for name in names {
+            let json = serde_json::to_string(&name).unwrap();
+            let decoded: ProviderName = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, name);
+        }
+
+        // 已知名字输出小写字符串；`Custom` 输出 `custom(<name>)` 字符串。
+        assert_eq!(
+            serde_json::to_string(&ProviderName::OpenAI).unwrap(),
+            r#""openai""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderName::Custom("Stub".into())).unwrap(),
+            r#""custom(stub)""#
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""custom(my-provider)""#).unwrap(),
+            ProviderName::Custom("my-provider".into())
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""deepseek""#).unwrap(),
+            ProviderName::DeepSeek
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""OpenAI""#).unwrap(),
+            ProviderName::OpenAI
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""DeepSeek""#).unwrap(),
+            ProviderName::DeepSeek
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""CUSTOM(My-Provider)""#).unwrap(),
+            ProviderName::Custom("my-provider".into())
+        );
+        // 未识别的裸字符串兜底为 `Custom`。
+        assert_eq!(
+            serde_json::from_str::<ProviderName>(r#""some-provider""#).unwrap(),
+            ProviderName::Custom("some-provider".into())
+        );
+    }
+
+    #[test]
+    fn provider_kind_serde_roundtrip() {
+        let kinds = [
+            ProviderKind::Completions,
+            ProviderKind::Responses,
+            ProviderKind::Messages,
+        ];
+
+        for kind in kinds {
+            let json = serde_json::to_string(&kind).unwrap();
+            let decoded: ProviderKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, kind);
+        }
+
+        assert_eq!(
+            serde_json::to_string(&ProviderKind::Responses).unwrap(),
+            r#""responses""#
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>(r#""completions""#).unwrap(),
+            ProviderKind::Completions
+        );
     }
 }

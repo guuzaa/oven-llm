@@ -21,6 +21,12 @@ fn is_zero(v: &u32) -> bool {
     *v == 0
 }
 
+impl Usage {
+    pub fn reset(&mut self) {
+        *self = Default::default();
+    }
+}
+
 impl Add for Usage {
     type Output = Usage;
 
@@ -112,6 +118,18 @@ mod tests {
         assert_eq!(usage.output_tokens, 0);
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.reasoning_tokens, 0);
+    }
+
+    #[test]
+    fn usage_reset_fields() {
+        let mut usage = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 1,
+            reasoning_tokens: 2,
+        };
+        usage.reset();
+        assert_eq!(usage, Usage::default());
     }
 
     #[test]

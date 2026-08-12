@@ -13,7 +13,7 @@ use super::types::{
     WireTool, WireToolCall, WireToolCallFunction,
 };
 use crate::domain::message::{ContentBlock, Message, Role};
-use crate::domain::request::{ReasoningEffort, Request, ThinkingMode};
+use crate::domain::request::Request;
 use crate::domain::tool::{Tool, ToolChoice};
 
 /// `encode_request` 及其子函数的编码失败原因。
@@ -77,18 +77,10 @@ pub(crate) fn encode_request(
     };
 
     let thinking = req.thinking.map(|t| WireThinking {
-        mode: match t {
-            ThinkingMode::Enabled => "enabled".to_string(),
-            ThinkingMode::Disabled => "disabled".to_string(),
-        },
+        mode: t.to_string(),
     });
 
-    let reasoning_effort = req.reasoning_effort.map(|e| match e {
-        ReasoningEffort::None => "none".to_string(),
-        ReasoningEffort::Low => "low".to_string(),
-        ReasoningEffort::Medium => "medium".to_string(),
-        ReasoningEffort::High => "high".to_string(),
-    });
+    let reasoning_effort = req.reasoning_effort.map(|e| e.to_string());
 
     Ok(ChatCompletionRequest {
         model: req.model.as_str().to_owned(),

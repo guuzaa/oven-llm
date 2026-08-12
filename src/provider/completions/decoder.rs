@@ -159,6 +159,7 @@ fn decode_usage(usage: WireUsage) -> Usage {
         reasoning_tokens: usage
             .completion_tokens_details
             .and_then(|d| d.reasoning_tokens)
+            .or_else(|| usage.prompt_tokens_details.and_then(|d| d.reasoning_tokens))
             .unwrap_or(0),
     }
 }
@@ -639,6 +640,38 @@ mod tests {
                 output_tokens: 50,
                 cache_read_tokens: 40,
                 reasoning_tokens: 84,
+            })
+        );
+    }
+
+    #[test]
+    fn decode_usage_falls_back_to_prompt_tokens_details_reasoning_tokens() {
+        // 部分 provider 把 reasoning_tokens 放在 prompt_tokens_details 下
+        let wire = wire_response(
+            vec![choice(assistant_message(Some("hi")), Some("stop"))],
+            Some(WireUsage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                prompt_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: None,
+                    reasoning_tokens: Some(33),
+                }),
+                completion_tokens_details: Some(WireTokenDetails {
+                    cached_tokens: None,
+                    reasoning_tokens: None,
+                }),
+                ..Default::default()
+            }),
+        );
+        let response = decode_response(wire).unwrap();
+        assert_eq!(
+            response.usage,
+            Some(Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 0,
+                reasoning_tokens: 33,
             })
         );
     }

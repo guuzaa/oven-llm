@@ -64,6 +64,15 @@ pub enum ThinkingMode {
     Disabled,
 }
 
+impl fmt::Display for ThinkingMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            ThinkingMode::Enabled => "enabled",
+            ThinkingMode::Disabled => "disabled",
+        })
+    }
+}
+
 /// 推理强度：控制模型在 thinking 阶段投入的计算量。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -72,6 +81,17 @@ pub enum ReasoningEffort {
     Low,
     Medium,
     High,
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            ReasoningEffort::None => "none",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+        })
+    }
 }
 
 /// 采样参数：控制模型生成时的随机性与长度限制。

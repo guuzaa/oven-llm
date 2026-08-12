@@ -20,6 +20,7 @@ pub use validate::{ValidationError, estimate_input_tokens, validate_request};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use std::fmt;
 
 use crate::domain::{ModelId, Request, Response, StreamEvent};
 
@@ -94,6 +95,20 @@ impl<'de> Deserialize<'de> for ProviderName {
                 None => ProviderName::Custom(raw),
             },
         })
+    }
+}
+
+impl fmt::Display for ProviderName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderName::OpenAI => f.write_str("OpenAI"),
+            ProviderName::DeepSeek => f.write_str("DeepSeek"),
+            ProviderName::Moonshot => f.write_str("Moonshot"),
+            ProviderName::Zhipu => f.write_str("Zhipu"),
+            ProviderName::Anthropic => f.write_str("Anthropic"),
+            ProviderName::Grok => f.write_str("Grok"),
+            ProviderName::Custom(name) => write!(f, "Custom({})", name),
+        }
     }
 }
 
@@ -201,6 +216,20 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ProviderName>(r#""some-provider""#).unwrap(),
             ProviderName::Custom("some-provider".into())
+        );
+    }
+
+    #[test]
+    fn provider_name_display() {
+        assert_eq!(ProviderName::OpenAI.to_string(), "OpenAI");
+        assert_eq!(ProviderName::DeepSeek.to_string(), "DeepSeek");
+        assert_eq!(ProviderName::Moonshot.to_string(), "Moonshot");
+        assert_eq!(ProviderName::Zhipu.to_string(), "Zhipu");
+        assert_eq!(ProviderName::Anthropic.to_string(), "Anthropic");
+        assert_eq!(ProviderName::Grok.to_string(), "Grok");
+        assert_eq!(
+            ProviderName::Custom("My-Provider".into()).to_string(),
+            "Custom(My-Provider)"
         );
     }
 

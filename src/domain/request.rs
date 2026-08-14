@@ -324,6 +324,9 @@ impl RequestBuilder {
     /// 设置思维链模式。
     pub fn thinking(mut self, mode: ThinkingMode) -> Self {
         self.thinking = Some(mode);
+        if mode == ThinkingMode::Enabled && self.reasoning_effort.is_none() {
+            self.reasoning_effort = Some(ReasoningEffort::Medium);
+        }
         self
     }
 
@@ -557,6 +560,17 @@ mod tests {
 
         assert_eq!(err, BuilderError::MissingModel);
         assert_eq!(err.to_string(), "builder missing required field: model");
+    }
+
+    #[test]
+    fn builder_defaults_reasoning_effort_to_medium() {
+        let req = Request::builder()
+            .model("gpt-4")
+            .thinking(ThinkingMode::Enabled)
+            .build()
+            .unwrap();
+
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::Medium));
     }
 
     #[test]

@@ -22,7 +22,6 @@ use secrecy::SecretString;
 
 use super::decoder::{self, StreamDecoder};
 use super::encoder;
-use super::models::{deepseek_models, grok_models};
 use super::types::{ResponseEvent, ResponseObject};
 use crate::ProviderName;
 use crate::domain::{ModelId, Request, Response, StreamEvent};
@@ -44,43 +43,7 @@ pub struct ResponsesProvider {
     client: isahc::HttpClient,
 }
 
-/// OpenAI 官方 Responses base_url。
-pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// DeepSeek Responses base_url。
-pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-/// xAI Grok Responses base_url。
-pub(crate) const GROK_BASE_URL: &str = "https://api.x.ai/v1";
-
 impl ResponsesProvider {
-    /// 通过 `ProviderName` 派发构造。已知的 Responses API 服务商会自动填入
-    /// 对应的 `base_url` 与模型元数据；对其他服务商，请改用 [`with_base_url`]
-    /// 或 [`with_models`]。
-    pub fn new(provider_name: ProviderName, api_key: impl Into<SecretString>) -> Self {
-        match &provider_name {
-            ProviderName::OpenAI => Self::openai(api_key),
-            ProviderName::DeepSeek => Self::deepseek(api_key),
-            ProviderName::Grok => Self::grok(api_key),
-            ProviderName::Anthropic => {
-                panic!(
-                    "Anthropic ({provider_name:?}) does not provide a Responses API; \
-                     use the Anthropic-specific provider instead of OpenAIResponsesProvider"
-                )
-            }
-            ProviderName::Moonshot | ProviderName::Zhipu => {
-                panic!(
-                    "{provider_name:?} has no Responses API preset yet; \
-                     use OpenAIResponsesProvider::with_base_url or ::with_models instead"
-                )
-            }
-            ProviderName::Custom(name) => {
-                panic!(
-                    "cannot dispatch to custom provider '{name}'; \
-                     use OpenAIResponsesProvider::with_base_url or ::with_models instead"
-                )
-            }
-        }
-    }
-
     /// 构造一个不带静态模型元数据、不带额外请求头的 provider（显式指定
     /// `base_url`，可用于 `Custom` 服务商）。
     pub fn with_base_url(
@@ -121,44 +84,6 @@ impl ResponsesProvider {
             model_catalog,
             client: isahc::HttpClient::new().expect("isahc HttpClient::new() should succeed"),
         }
-    }
-
-    /// DeepSeek 预设：`base_url = https://api.deepseek.com`，目录含
-    /// `deepseek-v4-flash`（官方文档注明 `deepseek-v4-pro` 暂不支持
-    /// Responses API）。
-    pub fn deepseek(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            DEEPSEEK_BASE_URL,
-            ProviderName::DeepSeek,
-            api_key,
-            deepseek_models(),
-            HeaderMap::new(),
-        )
-    }
-
-    /// Grok（xAI）预设：`base_url = https://api.x.ai/v1`，目录含
-    /// `grok-build-0.1`。
-    pub fn grok(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            GROK_BASE_URL,
-            ProviderName::Grok,
-            api_key,
-            grok_models(),
-            HeaderMap::new(),
-        )
-    }
-
-    /// OpenAI 官方预设：`base_url = https://api.openai.com/v1`，空模型目录
-    /// （官方模型迭代快，硬编码容易过期，调用方应优先使用 `list_models()`
-    /// 或自行通过 `with_models` 传入）。
-    pub fn openai(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            OPENAI_BASE_URL,
-            ProviderName::OpenAI,
-            api_key,
-            Vec::new(),
-            HeaderMap::new(),
-        )
     }
 
     /// 将 `Request` 编码为最终发送的 JSON 请求体：先由 `encoder::encode_request`
@@ -354,44 +279,6 @@ mod tests {
             messages: vec![Message::user(vec![ContentBlock::text("hi")])],
             ..Default::default()
         }
-    }
-
-    // --- constructors ---
-
-    #[test]
-    fn new_dispatches_openai() {
-        let provider = ResponsesProvider::new(ProviderName::OpenAI, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.openai.com/v1");
-        assert_eq!(provider.provider_name, ProviderName::OpenAI);
-        assert!(provider.known_models().is_empty());
-    }
-
-    #[test]
-    fn new_dispatches_deepseek() {
-        let provider = ResponsesProvider::new(ProviderName::DeepSeek, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.deepseek.com");
-        assert_eq!(provider.provider_name, ProviderName::DeepSeek);
-        assert_eq!(provider.known_models().len(), deepseek_models().len());
-    }
-
-    #[test]
-    fn new_dispatches_grok() {
-        let provider = ResponsesProvider::new(ProviderName::Grok, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.x.ai/v1");
-        assert_eq!(provider.provider_name, ProviderName::Grok);
-        assert_eq!(provider.known_models().len(), grok_models().len());
-    }
-
-    #[test]
-    #[should_panic(expected = "Anthropic")]
-    fn new_panics_on_anthropic() {
-        let _ = ResponsesProvider::new(ProviderName::Anthropic, api_key("k"));
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot dispatch")]
-    fn new_panics_on_custom() {
-        let _ = ResponsesProvider::new(ProviderName::Custom("example".into()), api_key("k"));
     }
 
     #[test]

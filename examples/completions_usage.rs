@@ -2,7 +2,7 @@
 //!
 //! 演示：
 //! - 使用 `ModelId` 构建 provider 无关的 `Request`
-//! - 创建带静态模型目录的 `OpenAICompatProvider::deepseek`
+//! - 通过 `with_base_url` 显式配置 provider（base_url + provider_name）
 //! - 直接调用 `complete` / `stream`；已知模型会由 provider 自动校验，
 //!   未命中目录的模型则按宽松策略透传
 //! - 演示 `list_models`、非流式调用、流式调用并打印 `Delta::TextDelta` 内容
@@ -18,7 +18,9 @@
 use std::io::Write;
 use std::{io, time::Duration};
 
-use oven_llm::{CompletionsProvider, Delta, Message, Provider, Request, StreamEvent, ThinkingMode};
+use oven_llm::{
+    CompletionsProvider, Delta, Message, Provider, ProviderName, Request, StreamEvent, ThinkingMode,
+};
 
 async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
     // 3. 演示 list_models（可能因缺少真实 API key/网络而失败，打印错误后继续）。
@@ -88,9 +90,14 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
 
 #[tokio::main]
 async fn main() {
-    // 1. 创建 DeepSeek provider（从环境变量读取 API key，未设置时使用占位值）。
+    // 1. 创建 Zhipu provider：base_url 与 provider 名称全部由用户显式配置
+    //    （从环境变量读取 API key，未设置时使用占位值）。
     let api_key = std::env::var("ZHIPU_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
-    let provider = Box::new(CompletionsProvider::zhipu(api_key));
+    let provider = Box::new(CompletionsProvider::with_base_url(
+        "https://open.bigmodel.cn/api/paas/v4",
+        ProviderName::Zhipu,
+        api_key,
+    ));
 
     // 2. 构建请求。Provider 会为其静态模型目录中命中的 ID 自动执行能力校验。
     let request = Request::builder()

@@ -21,6 +21,19 @@ impl ModelRegistry {
         }
     }
 
+    /// 从一组 `ModelInfo` 构造注册表；重复 id 按 [`Self::register`] 的
+    /// "后注册覆盖"语义处理。
+    pub fn from_models(models: impl IntoIterator<Item = ModelInfo>) -> Self {
+        let mut registry = Self::new();
+        registry.register_all(models);
+        registry
+    }
+
+    /// 消费注册表并返回其中全部 `ModelInfo`（顺序不保证稳定）。
+    pub fn into_models(self) -> Vec<ModelInfo> {
+        self.models.into_values().collect()
+    }
+
     /// 注册一个 `ModelInfo`。若 `id` 已存在，则用新值覆盖旧值
     /// （Requirement 8.2）。
     pub fn register(&mut self, info: ModelInfo) {
@@ -32,6 +45,15 @@ impl ModelRegistry {
         for info in infos {
             self.register(info);
         }
+    }
+
+    /// 按 id 移除模型，返回被移除的 `ModelInfo`；未命中返回 `None`。
+    pub fn unregister<Q>(&mut self, id: &Q) -> Option<ModelInfo>
+    where
+        ModelId: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.models.remove(id)
     }
 
     /// 按模型标识精确查找。支持传入 `&ModelId` 或 `&str`；未注册的 ID 返回
@@ -149,5 +171,50 @@ mod tests {
     fn get_returns_none_for_unregistered_id() {
         let registry = ModelRegistry::new();
         assert_eq!(registry.get("does-not-exist"), None);
+    }
+
+    #[test]
+    fn from_models_preserves_later_override() {
+        let mut models = vec![
+            model("m1", ProviderName::DeepSeek),
+            model("m1", ProviderName::Zhipu),
+        ];
+        models[1].context_window = 999_999;
+
+        let registry = ModelRegistry::from_models(models);
+
+        assert_eq!(registry.list_all().len(), 1);
+        let info = registry.get("m1").unwrap();
+        assert_eq!(info.provider, ProviderName::Zhipu);
+        assert_eq!(info.context_window, 999_999);
+    }
+
+    #[test]
+    fn into_models_roundtrips_registered_models() {
+        let mut registry = ModelRegistry::new();
+        registry.register_all([
+            model("m1", ProviderName::DeepSeek),
+            model("m2", ProviderName::OpenAI),
+        ]);
+
+        let mut ids: Vec<String> = registry
+            .into_models()
+            .into_iter()
+            .map(|info| info.id)
+            .collect();
+        ids.sort();
+
+        assert_eq!(ids, vec!["m1", "m2"]);
+    }
+
+    #[test]
+    fn unregister_removes_existing_and_returns_none_otherwise() {
+        let mut registry = ModelRegistry::new();
+        registry.register(model("m1", ProviderName::DeepSeek));
+
+        let removed = registry.unregister("m1").unwrap();
+        assert_eq!(removed.id, "m1");
+        assert!(registry.get("m1").is_none());
+        assert!(registry.unregister("m1").is_none());
     }
 }

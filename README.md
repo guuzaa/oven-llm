@@ -8,9 +8,11 @@ A Rust library for calling LLM providers through one unified, async runtime-agno
 
 `oven-llm` exposes a single `Provider` trait, a provider-agnostic domain model (`Request` /
 `Response` / `StreamEvent` / `Message` / `Tool`), and two wire protocol implementations — the
-OpenAI Chat Completions compatible protocol and the OpenAI Responses API — with built-in presets
-for DeepSeek, Moonshot (Kimi), Zhipu GLM, xAI Grok, and OpenAI itself. Switch vendors by
-changing one constructor call; application code never touches wire formats.
+OpenAI Chat Completions compatible protocol and the OpenAI Responses API. The crate is
+provider-agnostic: it ships no provider presets, base URLs, or model metadata — you configure
+the endpoint (`base_url`) and maintain model catalogs yourself via `ModelRegistry`, then inject
+them when building a provider. Switch vendors by changing configuration, not code; application
+code never touches wire formats.
 
 > [!WARNING]
 > **Status: not production-ready.** This crate is under active development. The public API is
@@ -30,8 +32,8 @@ changing one constructor call; application code never touches wire formats.
 - **Two OpenAI-family protocols**:
   - `CompletionsProvider` — OpenAI Chat Completions compatible protocol (`POST /chat/completions`),
     spoken by OpenAI, DeepSeek, Moonshot (Kimi), Zhipu GLM and many gateways.
-  - `ResponsesProvider` — OpenAI Responses API (`POST /responses`), with DeepSeek and xAI Grok
-    presets.
+  - `ResponsesProvider` — OpenAI Responses API (`POST /responses`). Both protocols are
+    provider-agnostic: the endpoint and model catalog are fully user-supplied.
 - **Streaming everywhere** — SSE responses are normalized into a unified Anthropic-style
   `StreamEvent` stream (`MessageStart` / `ContentBlockDelta` / `MessageStop` …), and
   `StreamCollector` rebuilds a complete `Response` from the event stream.
@@ -40,10 +42,11 @@ changing one constructor call; application code never touches wire formats.
   loop pattern.
 - **Thinking & reasoning** — `ThinkingMode`, `ReasoningEffort`, `ContentBlock::Thinking`,
   `Delta::ThinkingDelta`, and `Usage::reasoning_tokens` across both protocols.
-- **Model metadata, validation & discovery** — static model catalogs carrying context window, max
-  output tokens, capabilities and pricing; `validate_request` / `estimate_input_tokens` check
-  requests against known models; dynamic discovery via `list_models()` (`GET /models`);
-  `ModelRegistry` for managing your own catalogs.
+- **Model metadata, validation & discovery** — user-maintained model catalogs carrying context
+  window, max output tokens, capabilities and pricing; `validate_request` /
+  `estimate_input_tokens` check requests against known models; dynamic discovery via
+  `list_models()` (`GET /models`); `ModelRegistry` is the single entry point for managing
+  provider model lists.
 - **Async runtime-agnostic** — built on `isahc` + `async-trait`; the library has no tokio
   dependency (tokio appears only in dev-dependencies for tests and examples).
 - **Provider-private parameters** — `provider_options` passes vendor-specific JSON straight into
@@ -57,18 +60,22 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-oven-llm = "0.2"
+oven-llm = "0.4"
 ```
 
 A minimal non-streaming call:
 
 ```rust
-use oven_llm::{CompletionsProvider, Message, Provider, Request, ThinkingMode};
+use oven_llm::{CompletionsProvider, Message, Provider, ProviderName, Request, ThinkingMode};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key = std::env::var("DEEPSEEK_API_KEY")?;
-    let provider = CompletionsProvider::deepseek(api_key);
+    let provider = CompletionsProvider::with_base_url(
+        "https://api.deepseek.com",
+        ProviderName::DeepSeek,
+        api_key,
+    );
 
     let request = Request::builder()
         .model("deepseek-v4-flash")
@@ -85,8 +92,9 @@ Ok(())
 
 ### Unified provider creation (`ProviderBuilder`)
 
-Instead of calling `CompletionsProvider::new` / `ResponsesProvider::new` separately, create any
-provider through one entry point — `ProviderKind` + `ProviderName` + API key:
+Instead of calling `CompletionsProvider::with_base_url` / `ResponsesProvider::with_base_url`
+separately, create any provider through one entry point — `ProviderKind` + `ProviderName` +
+API key + `base_url`:
 
 ```rust
 use oven_llm::{Provider, ProviderBuilder, ProviderKind, ProviderName};
@@ -95,23 +103,23 @@ use oven_llm::{Provider, ProviderBuilder, ProviderKind, ProviderName};
 let provider = ProviderBuilder::new(ProviderKind::Responses)          // or ProviderKind::Completions
     .provider_name(ProviderName::DeepSeek)
     .api_key(api_key)
+    .base_url("https://api.deepseek.com")
     .build()?;                              // Box<dyn Provider>
 
 // Option 2
 let provider = ProviderBuilder::completions()          // or responses()
     .provider_name(ProviderName::DeepSeek)
     .api_key(api_key)
+    .base_url("https://api.deepseek.com")
     .build()?;                              // Box<dyn Provider>
 
 let response = provider.complete(&request).await?;
 ```
 
-`build()` returns a `Result`, so unsupported kind/name combinations (e.g. Responses + Moonshot)
-surface as a typed error instead of panicking. Known presets keep their base URL and static model
-catalog, so `.known_models(...)` / `.add_model(...)` / `.extra_headers(...)` can augment them
-without a `base_url`. Custom gateways work too: add `.base_url(...)` (optionally with
-`.extra_headers(...)` / `.known_models(...)` / `.add_model(...)`), and any `ProviderName`,
-including `Custom(...)`, is accepted.
+`build()` returns a `Result`: `base_url` is always required (there are no built-in presets), and
+the `Messages` protocol is not implemented yet. Any `ProviderName`, including `Custom(...)`, is
+accepted; `.known_models(...)` / `.add_model(...)` / `.model_registry(...)` supply the model
+catalog and `.extra_headers(...)` adds vendor headers.
 
 ### Routing across providers (`Router`)
 
@@ -143,9 +151,9 @@ let mut stream = router.stream(&request).await?; // same unified StreamEvent str
 ```
 
 Dispatch priority: exact `alias(...)` bindings first, then the longest matching `route(...)`
-prefix (earliest rule wins ties), then each provider's static model catalog in registration
-order. If nothing matches, `complete` / `stream` return `RouterError::UnknownModel` instead of
-silently passing the request to the wrong vendor.
+prefix (earliest rule wins ties), then each provider's configured model catalog (the models you
+injected via the builder) in registration order. If nothing matches, `complete` / `stream`
+return `RouterError::UnknownModel` instead of silently passing the request to the wrong vendor.
 
 ## Supported protocols & providers
 
@@ -158,27 +166,17 @@ Each provider translates domain models to its own wire format via dedicated
 vendors speaks. Non-streaming responses decode `choices[0]`; streaming uses SSE terminated by a
 `data: [DONE]` marker.
 
-| Provider preset | Base URL | Static model catalog |
-| --- | --- | --- |
-| `CompletionsProvider::deepseek` | `https://api.deepseek.com` | `deepseek-v4-flash`, `deepseek-v4-pro` |
-| `CompletionsProvider::moonshot` | `https://api.moonshot.cn/v1` | `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6` |
-| `CompletionsProvider::zhipu` | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7-flash` |
-| `CompletionsProvider::openai` | `https://api.openai.com/v1` | *(empty — prefer `list_models()`)* |
-
 ### OpenAI Responses API
 
 `ResponsesProvider` implements the newer Responses protocol. Streaming is SSE-based but has no
 `[DONE]` marker: the stream terminates with `response.completed` / `response.incomplete` events,
 and partial tool arguments arrive as `input_json` deltas.
 
-| Provider preset | Base URL | Static model catalog |
-| --- | --- | --- |
-| `ResponsesProvider::deepseek` | `https://api.deepseek.com` | `deepseek-v4-flash` |
-| `ResponsesProvider::grok` | `https://api.x.ai/v1` | `grok-build-0.1` |
-| `ResponsesProvider::openai` | `https://api.openai.com/v1` | *(empty — prefer `list_models()`)* |
-
-Anything not covered by a preset can be reached through `with_base_url(...)` /
-`with_models(...)`, so any OpenAI-compatible gateway works.
+The crate ships no provider presets or endpoints: every provider is configured through
+`with_base_url(...)` / `with_models(...)` (or `ProviderBuilder` with an explicit `base_url`), so
+any OpenAI-compatible gateway works. Maintain the models each provider supports in a
+`ModelRegistry` and inject it with `.model_registry(...)` / `.known_models(...)` /
+`.add_model(...)`, or rely on `list_models()` for dynamic discovery.
 
 ## Examples
 
@@ -284,16 +282,27 @@ let request = Request::builder()
 ### Model registry & validation
 
 ```rust
-use oven_llm::{ModelInfo, ModelRegistry, ProviderName};
+use oven_llm::{ModelInfo, ModelRegistry, ProviderBuilder, ProviderKind, ProviderName};
 
 let mut registry = ModelRegistry::new();
 registry.register(ModelInfo::minimal("deepseek-chat", ProviderName::DeepSeek));
+registry.register(ModelInfo::minimal("deepseek-coder", ProviderName::DeepSeek));
 
 let by_provider = registry.list_by_provider(&ProviderName::DeepSeek);
 let matches = registry.search("deepseek");
+
+let provider = ProviderBuilder::new(ProviderKind::Completions)
+    .provider_name(ProviderName::DeepSeek)
+    .api_key(api_key)
+    .base_url("https://api.deepseek.com")
+    .model_registry(registry)
+    .build()?;
 ```
 
-When a requested model ID hits a provider's static catalog, the request is validated against the
+The crate ships no provider-specific model data; `ModelRegistry` is where you maintain the
+list of models each provider supports (`register` overwrites an existing ID, `unregister`
+removes one, `from_models` / `into_models` convert to and from a `Vec<ModelInfo>`). When a
+requested model ID hits a provider's configured catalog, the request is validated against the
 model's capabilities (context window, max output tokens, tool / vision / streaming support, …).
 Unknown models pass through in a permissive mode and are left to the upstream service.
 
@@ -303,16 +312,16 @@ Unknown models pass through in a permissive mode and are left to the upstream se
 | --- | --- |
 | `src/domain/` | Provider-agnostic model: `Request` + builder, `Message` / `ContentBlock` / `Role`, `Response` / `StopReason` / `Usage`, `StreamEvent` / `Delta` / `StreamCollector`, `Tool` / `ToolChoice` |
 | `src/provider/` | `Provider` trait, `ProviderError`, model metadata (`ModelInfo` / `ModelCapabilities` / `Pricing`), `ModelRegistry`, request validation (`validate_request` / `estimate_input_tokens`) |
-| `src/provider/completions/` | Chat Completions wire types, encoder, decoder, static model catalogs, `CompletionsProvider` |
-| `src/provider/responses/` | Responses API wire types, encoder, decoder, static model catalogs, `ResponsesProvider` |
+| `src/provider/completions/` | Chat Completions wire types, encoder, decoder, `CompletionsProvider` |
+| `src/provider/responses/` | Responses API wire types, encoder, decoder, `ResponsesProvider` |
 | `src/provider/http.rs` | Shared `isahc` transport: headers, endpoint joining, status-code mapping, SSE bridge |
 | `examples/` | Runnable examples: `completions_usage`, `responses_usage`, `agent_loop`, `router_usage` |
 | `scripts/` | Shell scripts + logs used while manually validating against real vendors |
 
 ## Contributing
 
-Contributions are very welcome — bug reports, documentation, new provider presets, new wire
-protocols, and model catalog updates all help the project grow.
+Contributions are very welcome — bug reports, documentation, new wire protocols, and model
+catalog examples all help the project grow.
 
 Development workflow:
 
@@ -333,7 +342,6 @@ Guidelines:
 
 Ideas for contributions:
 
-- New provider presets (base URL + model metadata + pricing).
 - Additional wire protocols, e.g. Anthropic Messages or Gemini.
 - Vision / image input coverage for more providers.
 - Retry & backoff policies built on `ProviderError::RateLimit`.

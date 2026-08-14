@@ -1,5 +1,32 @@
 # Changelog
 
+## [pending] - 2026-08-14
+### Breaking
+- Removed all provider-specific presets and endpoints: the static model
+  catalogs (`completions::models` / `responses::models` and their
+  `deepseek_models` / `moonshot_models` / `zhipu_models` / `grok_models`
+  functions), the preset constructors (`CompletionsProvider::deepseek` /
+  `moonshot` / `zhipu` / `openai`, `ResponsesProvider::deepseek` / `grok` /
+  `openai`), the `new(ProviderName, ...)` dispatch constructors, the base URL
+  constants, and `ProviderBuilder` preset dispatch. The crate ships no provider
+  endpoints or model metadata.
+- `base_url` is now required on every build path: `ProviderBuilder::build()`
+  without it returns `InvalidProviderConfig`; `with_base_url` / `with_models`
+  are the only provider constructors.
+
+### Added
+- `ModelRegistry::from_models`, `ModelRegistry::into_models`, and
+  `ModelRegistry::unregister` — `ModelRegistry` is now the single entry point
+  for users to maintain provider model lists.
+- `ProviderBuilder::model_registry(...)` injects a maintained `ModelRegistry`
+  into the built provider (same setting semantics as `known_models`, with
+  `add_model` still appending).
+
+### Changed
+- Router's catalog-scan fallback and request validation now apply only to
+  user-supplied model catalogs; README no longer lists provider presets or
+  static models.
+
 ## [0.3.0] - 2026-08-14
 ### Added
 - New `Router` routing layer: register multiple providers and dispatch

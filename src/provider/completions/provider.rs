@@ -22,7 +22,6 @@ use secrecy::SecretString;
 
 use super::decoder::{self, StreamDecoder};
 use super::encoder;
-use super::models::{deepseek_models, moonshot_models, zhipu_models};
 use super::types::{ChatCompletionChunk, ChatCompletionResponse};
 use crate::ProviderName;
 use crate::domain::{ModelId, Request, Response, StreamEvent};
@@ -44,46 +43,7 @@ pub struct CompletionsProvider {
     client: isahc::HttpClient,
 }
 
-/// OpenAI 官方 Chat Completions base_url。
-pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// DeepSeek Chat Completions base_url。
-pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-/// Moonshot（Kimi）Chat Completions base_url。
-pub(crate) const MOONSHOT_BASE_URL: &str = "https://api.moonshot.cn/v1";
-/// 智谱 GLM Chat Completions base_url。
-pub(crate) const ZHIPU_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
-
 impl CompletionsProvider {
-    /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的
-    /// `base_url` 与模型元数据；对 `Custom` 或尚不支持的服务商，请改用
-    /// [`with_base_url`] 或 [`with_models`]。
-    pub fn new(provider_name: ProviderName, api_key: impl Into<SecretString>) -> Self {
-        match &provider_name {
-            ProviderName::OpenAI => Self::openai(api_key),
-            ProviderName::DeepSeek => Self::deepseek(api_key),
-            ProviderName::Moonshot => Self::moonshot(api_key),
-            ProviderName::Zhipu => Self::zhipu(api_key),
-            ProviderName::Anthropic => {
-                panic!(
-                    "Anthropic ({provider_name:?}) does not provide an OpenAI-compatible API; \
-                     use the Anthropic-specific provider instead of OpenAICompatProvider"
-                )
-            }
-            ProviderName::Grok => {
-                panic!(
-                    "Grok ({provider_name:?}) has no preset yet; \
-                     use OpenAICompatProvider::with_base_url or ::with_models instead"
-                )
-            }
-            ProviderName::Custom(name) => {
-                panic!(
-                    "cannot dispatch to custom provider '{name}'; \
-                     use OpenAICompatProvider::with_base_url or ::with_models instead"
-                )
-            }
-        }
-    }
-
     /// 构造一个不带静态模型元数据、不带额外请求头的 provider（显式指定
     /// `base_url`，可用于 `Custom` 服务商）。
     pub fn with_base_url(
@@ -124,54 +84,6 @@ impl CompletionsProvider {
             model_catalog,
             client: isahc::HttpClient::new().expect("isahc HttpClient::new() should succeed"),
         }
-    }
-
-    /// DeepSeek 预设：`base_url = https://api.deepseek.com`。
-    pub fn deepseek(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            DEEPSEEK_BASE_URL,
-            ProviderName::DeepSeek,
-            api_key,
-            deepseek_models(),
-            HeaderMap::new(),
-        )
-    }
-
-    /// Moonshot（Kimi）预设：`base_url = https://api.moonshot.cn/v1`。
-    pub fn moonshot(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            MOONSHOT_BASE_URL,
-            ProviderName::Moonshot,
-            api_key,
-            moonshot_models(),
-            HeaderMap::new(),
-        )
-    }
-
-    /// 智谱 GLM 预设：`base_url = https://open.bigmodel.cn/api/paas/v4`。
-    pub fn zhipu(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            ZHIPU_BASE_URL,
-            ProviderName::Zhipu,
-            api_key,
-            zhipu_models(),
-            HeaderMap::new(),
-        )
-    }
-
-    /// OpenAI 官方预设：`base_url = https://api.openai.com/v1`。
-    ///
-    /// `models.rs` 目前没有为 OpenAI 官方提供静态模型列表（其模型迭代速度快，
-    /// 硬编码容易过期），因此 `known_models()` 返回空列表；调用方应优先使用
-    /// `list_models()` 动态发现，或自行通过 `with_models` 传入。
-    pub fn openai(api_key: impl Into<SecretString>) -> Self {
-        Self::with_models(
-            OPENAI_BASE_URL,
-            ProviderName::OpenAI,
-            api_key,
-            Vec::new(),
-            HeaderMap::new(),
-        )
     }
 
     /// 将 `Request` 编码为最终发送的 JSON 请求体：先由 `encoder::encode_request`
@@ -386,89 +298,6 @@ mod tests {
             ProviderName::Custom("example".into())
         );
         assert!(provider.known_models().is_empty());
-    }
-
-    #[test]
-    fn deepseek_preset_has_correct_base_url_and_models() {
-        let provider = CompletionsProvider::deepseek(api_key("k"));
-        assert_eq!(provider.base_url, "https://api.deepseek.com");
-        assert_eq!(provider.provider_name, ProviderName::DeepSeek);
-        assert_eq!(provider.known_models().len(), deepseek_models().len());
-    }
-
-    #[test]
-    fn moonshot_preset_has_correct_base_url_and_models() {
-        let provider = CompletionsProvider::moonshot(api_key("k"));
-        assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
-        assert_eq!(provider.provider_name, ProviderName::Moonshot);
-        assert_eq!(provider.known_models().len(), moonshot_models().len());
-    }
-
-    #[test]
-    fn zhipu_preset_has_correct_base_url_and_models() {
-        let provider = CompletionsProvider::zhipu(api_key("k"));
-        assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
-        assert_eq!(provider.provider_name, ProviderName::Zhipu);
-        assert_eq!(provider.known_models().len(), zhipu_models().len());
-    }
-
-    #[test]
-    fn openai_preset_has_correct_base_url_and_empty_models() {
-        let provider = CompletionsProvider::openai(api_key("k"));
-        assert_eq!(provider.base_url, "https://api.openai.com/v1");
-        assert_eq!(provider.provider_name, ProviderName::OpenAI);
-        assert!(provider.known_models().is_empty());
-    }
-
-    // --- ProviderName dispatch (new) ---
-
-    #[test]
-    fn new_dispatches_openai() {
-        let provider = CompletionsProvider::new(ProviderName::OpenAI, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.openai.com/v1");
-        assert_eq!(provider.provider_name, ProviderName::OpenAI);
-    }
-
-    #[test]
-    fn new_dispatches_deepseek() {
-        let provider = CompletionsProvider::new(ProviderName::DeepSeek, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.deepseek.com");
-        assert_eq!(provider.provider_name, ProviderName::DeepSeek);
-        assert_eq!(provider.known_models().len(), deepseek_models().len());
-    }
-
-    #[test]
-    fn new_dispatches_moonshot() {
-        let provider = CompletionsProvider::new(ProviderName::Moonshot, api_key("k"));
-        assert_eq!(provider.base_url, "https://api.moonshot.cn/v1");
-        assert_eq!(provider.provider_name, ProviderName::Moonshot);
-        assert_eq!(provider.known_models().len(), moonshot_models().len());
-    }
-
-    #[test]
-    fn new_dispatches_zhipu() {
-        let provider = CompletionsProvider::new(ProviderName::Zhipu, api_key("k"));
-        assert_eq!(provider.base_url, "https://open.bigmodel.cn/api/paas/v4");
-        assert_eq!(provider.provider_name, ProviderName::Zhipu);
-        assert_eq!(provider.known_models().len(), zhipu_models().len());
-    }
-
-    #[test]
-    #[should_panic(expected = "Anthropic")]
-    fn new_panics_on_anthropic() {
-        let _ = CompletionsProvider::new(ProviderName::Anthropic, api_key("k"));
-    }
-
-    #[test]
-    #[should_panic(expected = "has no preset")]
-    fn new_panics_on_grok() {
-        let _ = CompletionsProvider::new(ProviderName::Grok, api_key("k"));
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot dispatch")]
-    fn new_panics_on_custom() {
-        let _ = CompletionsProvider::new(ProviderName::Custom("example".into()), api_key("k"));
     }
 
     // --- build_headers ---
@@ -701,10 +530,13 @@ mod tests {
 
     #[test]
     fn known_models_returns_configured_list() {
-        let mut models = deepseek_models();
+        let mut models = vec![
+            ModelInfo::minimal("m1", ProviderName::Custom("example".into())),
+            ModelInfo::minimal("m2", ProviderName::Custom("example".into())),
+        ];
         let provider = CompletionsProvider::with_models(
             "https://example.com",
-            ProviderName::DeepSeek,
+            ProviderName::Custom("example".into()),
             api_key("k"),
             models.clone(),
             HeaderMap::new(),

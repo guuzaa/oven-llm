@@ -32,6 +32,7 @@ async fn main() -> ExampleResult<()> {
     let provider = ProviderBuilder::completions()
         .provider_name(ProviderName::DeepSeek)
         .api_key(api_key)
+        .base_url("https://api.deepseek.com")
         .build()?;
 
     println!("coding workspace: {}", workspace_root.display());

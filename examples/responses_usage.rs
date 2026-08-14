@@ -1,7 +1,7 @@
 //! `oven-llm` Responses API 使用示例。
 //!
 //! 演示：
-//! - 使用 `OpenAIResponsesProvider::deepseek` 预设创建 provider
+//! - 通过 `ProviderBuilder` 显式配置 base_url 创建 provider
 //! - `list_models` 动态模型发现
 //! - 非流式 `complete` 调用（打印 thinking / text / usage / tool_use）
 //! - 流式 `stream` 调用（thinking 与 text 增量实时打印）
@@ -28,13 +28,13 @@ use serde_json::{Value, json};
 
 #[tokio::main]
 async fn main() {
-    // 1. 创建 provider（DeepSeek 预设；也可用 `::new(ProviderName::DeepSeek, key)`
-    //    或 `with_base_url` / `with_models` 自定义服务商）。
+    // 1. 创建 provider：base_url 与 provider 名称全部由用户显式配置。
     let api_key =
         std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
     let provider = ProviderBuilder::responses()
         .provider_name(ProviderName::DeepSeek)
         .api_key(api_key)
+        .base_url("https://api.deepseek.com")
         .build()
         .expect("DeepSeek responses API");
     println!("provider: {:?}", provider.provider_name());

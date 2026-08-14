@@ -1,33 +1,22 @@
-//! 统一 Provider 构造入口：`ProviderKind` + `ProviderName` + `api_key`。
+//! 统一 Provider 构造入口：`ProviderKind` + `ProviderName` + `api_key` +
+//! `base_url`。
 //!
 //! [`ProviderBuilder`] 把 `CompletionsProvider` / `ResponsesProvider` 的
-//! 分别调用收口为单一入口：必填 `kind` / `provider_name` / `api_key`，可选
-//! `base_url` / `extra_headers` / `known_models`。已知预设会保留自身的 base_url
-//! 与静态模型目录，可在此基础上追加模型与请求头；`Custom` 服务商需显式
-//! `base_url`。`build()` 返回 `Result<Box<dyn Provider>>`，不支持的组合返回
-//! [`ProviderError::UnsupportedProvider`]，配置缺失或冲突返回
+//! 分别调用收口为单一入口：必填 `kind` / `provider_name` / `api_key` /
+//! `base_url`，可选 `extra_headers` / 模型目录。crate 不提供任何 provider
+//! 预设或模型信息；base_url 与模型元数据（`known_models` / `add_model` /
+//! `model_registry`）全部由用户配置。`build()` 返回
+//! `Result<Box<dyn Provider>>`，未实现的协议返回
+//! [`ProviderError::UnsupportedProvider`]，配置缺失返回
 //! [`ProviderError::InvalidProviderConfig`]。
 
 use isahc::http::header::HeaderMap;
 use secrecy::SecretString;
 
 use crate::provider::completions::CompletionsProvider;
-use crate::provider::completions::models::{deepseek_models, moonshot_models, zhipu_models};
-use crate::provider::completions::provider::{
-    DEEPSEEK_BASE_URL as COMPLETIONS_DEEPSEEK_BASE_URL,
-    MOONSHOT_BASE_URL as COMPLETIONS_MOONSHOT_BASE_URL,
-    OPENAI_BASE_URL as COMPLETIONS_OPENAI_BASE_URL, ZHIPU_BASE_URL as COMPLETIONS_ZHIPU_BASE_URL,
-};
 use crate::provider::model::ModelInfo;
 use crate::provider::responses::ResponsesProvider;
-use crate::provider::responses::models::{
-    deepseek_models as responses_deepseek_models, grok_models,
-};
-use crate::provider::responses::provider::{
-    DEEPSEEK_BASE_URL as RESPONSES_DEEPSEEK_BASE_URL, GROK_BASE_URL as RESPONSES_GROK_BASE_URL,
-    OPENAI_BASE_URL as RESPONSES_OPENAI_BASE_URL,
-};
-use crate::provider::{Provider, ProviderError, ProviderKind, ProviderName};
+use crate::provider::{ModelRegistry, Provider, ProviderError, ProviderKind, ProviderName};
 
 /// 统一创建 `Provider` 的 builder。
 ///
@@ -38,6 +27,7 @@ use crate::provider::{Provider, ProviderError, ProviderKind, ProviderName};
 /// let provider = ProviderBuilder::new(ProviderKind::Responses)
 ///     .provider_name(ProviderName::DeepSeek)
 ///     .api_key("sk-...")
+///     .base_url("https://api.deepseek.com")
 ///     .build()
 ///     .unwrap();
 /// assert_eq!(provider.provider_name(), ProviderName::DeepSeek);
@@ -67,8 +57,8 @@ impl Default for ProviderBuilder {
 
 impl ProviderBuilder {
     /// 创建一个 builder，随后用 `kind` / `provider_name` / `api_key`
-    /// 设置协议种类（`Completions` / `Responses` / `Messages`）。
-    /// 填充必填项并调用 [`Self::build`]。
+    /// / `base_url` 设置协议种类（`Completions` / `Responses` / `Messages`）
+    /// 与端点。填充必填项并调用 [`Self::build`]。
     pub fn new(kind: ProviderKind) -> Self {
         Self {
             kind: Some(kind),
@@ -118,8 +108,8 @@ impl ProviderBuilder {
         self
     }
 
-    /// 设置自定义 `base_url`。提供后按 `Custom` 路径构造，任意
-    /// `ProviderName`（含 `Custom`）都允许。
+    /// 设置 provider 的 `base_url`（必填）。任意 `ProviderName`
+    /// （含 `Custom`）都允许。
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
         self
@@ -131,27 +121,34 @@ impl ProviderBuilder {
         self
     }
 
-    /// 设置静态模型元数据（已知预设或自定义 `base_url` 时生效）。
+    /// 设置模型元数据（已知预设或自定义 `base_url` 时生效）。
     pub fn known_models(mut self, known_models: Vec<ModelInfo>) -> Self {
         self.known_models = known_models;
         self
     }
 
-    /// 追加一个静态模型元数据（已知预设或自定义 `base_url` 时生效）。
+    /// 追加一个模型元数据（已知预设或自定义 `base_url` 时生效）。
     pub fn add_model(mut self, model: ModelInfo) -> Self {
         self.known_models.push(model);
         self
     }
 
+    /// 用 [`ModelRegistry`] 设置模型目录，等价于把注册表中的模型批量传给
+    /// [`Self::known_models`]。
+    ///
+    /// 与 `known_models` 同为设置语义：后调用者覆盖前者；随后仍可用
+    /// [`Self::add_model`] 追加单个模型。
+    pub fn model_registry(mut self, registry: ModelRegistry) -> Self {
+        self.known_models = registry.into_models();
+        self
+    }
+
     /// 按当前配置构造 provider。
     ///
-    /// - 缺失 `kind` / `provider_name` / `api_key` → `InvalidProviderConfig`
-    /// - 提供 `base_url` → 完全自定义路径（仅使用用户传入的模型/头）
-    /// - 命中已知预设 → 预设 base_url + 静态模型目录，并叠加用户追加的模型
-    ///   与请求头
-    /// - 未知服务商带模型/头但未提供 `base_url` → `InvalidProviderConfig`
-    /// - 不支持的组合 →
-    ///   `UnsupportedProvider`
+    /// - 缺失 `kind` / `provider_name` / `api_key` / `base_url` →
+    ///   `InvalidProviderConfig`
+    /// - `Messages` 协议尚未实现 → `UnsupportedProvider`
+    /// - 其余组合：用传入的 base_url、模型目录与请求头构造对应 provider
     pub fn build(self) -> Result<Box<dyn Provider>, ProviderError> {
         let kind = self.kind.ok_or_else(|| {
             ProviderError::InvalidProviderConfig("missing required field `kind`".into())
@@ -163,91 +160,34 @@ impl ProviderBuilder {
             ProviderError::InvalidProviderConfig("missing required field `api_key`".into())
         })?;
 
-        if let Some(base_url) = self.base_url {
-            return match kind {
-                ProviderKind::Completions => Ok(Box::new(CompletionsProvider::with_models(
-                    base_url,
-                    provider_name,
-                    api_key,
-                    self.known_models,
-                    self.extra_headers,
-                ))),
-                ProviderKind::Responses => Ok(Box::new(ResponsesProvider::with_models(
-                    base_url,
-                    provider_name,
-                    api_key,
-                    self.known_models,
-                    self.extra_headers,
-                ))),
-                ProviderKind::Messages => Err(ProviderError::UnsupportedProvider {
-                    kind,
-                    name: provider_name,
-                }),
-            };
+        if kind == ProviderKind::Messages {
+            return Err(ProviderError::UnsupportedProvider {
+                kind,
+                name: provider_name,
+            });
         }
 
-        if let Some((base_url, mut preset_models)) = preset(kind, &provider_name) {
-            preset_models.extend(self.known_models);
-            return match kind {
-                ProviderKind::Completions => Ok(Box::new(CompletionsProvider::with_models(
-                    base_url,
-                    provider_name,
-                    api_key,
-                    preset_models,
-                    self.extra_headers,
-                ))),
-                ProviderKind::Responses => Ok(Box::new(ResponsesProvider::with_models(
-                    base_url,
-                    provider_name,
-                    api_key,
-                    preset_models,
-                    self.extra_headers,
-                ))),
-                ProviderKind::Messages => Err(ProviderError::UnsupportedProvider {
-                    kind,
-                    name: provider_name,
-                }),
-            };
-        }
+        let base_url = self.base_url.ok_or_else(|| {
+            ProviderError::InvalidProviderConfig("missing required field `base_url`".into())
+        })?;
 
-        if !self.known_models.is_empty() || !self.extra_headers.is_empty() {
-            return Err(ProviderError::InvalidProviderConfig(
-                "`known_models` / `extra_headers` require `base_url`".into(),
-            ));
+        match kind {
+            ProviderKind::Completions => Ok(Box::new(CompletionsProvider::with_models(
+                base_url,
+                provider_name,
+                api_key,
+                self.known_models,
+                self.extra_headers,
+            ))),
+            ProviderKind::Responses => Ok(Box::new(ResponsesProvider::with_models(
+                base_url,
+                provider_name,
+                api_key,
+                self.known_models,
+                self.extra_headers,
+            ))),
+            ProviderKind::Messages => unreachable!("Messages handled above"),
         }
-
-        Err(ProviderError::UnsupportedProvider {
-            kind,
-            name: provider_name,
-        })
-    }
-}
-
-/// 已知预设表：返回 `(base_url, 静态模型目录)`；未知组合返回 `None`。
-fn preset(kind: ProviderKind, name: &ProviderName) -> Option<(&'static str, Vec<ModelInfo>)> {
-    match (kind, name) {
-        (ProviderKind::Completions, ProviderName::OpenAI) => {
-            Some((COMPLETIONS_OPENAI_BASE_URL, Vec::new()))
-        }
-        (ProviderKind::Completions, ProviderName::DeepSeek) => {
-            Some((COMPLETIONS_DEEPSEEK_BASE_URL, deepseek_models()))
-        }
-        (ProviderKind::Completions, ProviderName::Moonshot) => {
-            Some((COMPLETIONS_MOONSHOT_BASE_URL, moonshot_models()))
-        }
-        (ProviderKind::Completions, ProviderName::Zhipu) => {
-            Some((COMPLETIONS_ZHIPU_BASE_URL, zhipu_models()))
-        }
-        (ProviderKind::Responses, ProviderName::OpenAI) => {
-            Some((RESPONSES_OPENAI_BASE_URL, Vec::new()))
-        }
-        (ProviderKind::Responses, ProviderName::DeepSeek) => {
-            Some((RESPONSES_DEEPSEEK_BASE_URL, responses_deepseek_models()))
-        }
-        (ProviderKind::Responses, ProviderName::Grok) => {
-            Some((RESPONSES_GROK_BASE_URL, grok_models()))
-        }
-        _ => None,
     }
 }
 
@@ -259,40 +199,23 @@ mod tests {
         ProviderBuilder::new(kind)
             .provider_name(name)
             .api_key("k")
+            .base_url("https://example.com")
             .build()
     }
 
     #[test]
-    fn completions_presets_dispatch() {
-        for name in [
-            ProviderName::OpenAI,
-            ProviderName::DeepSeek,
-            ProviderName::Moonshot,
-            ProviderName::Zhipu,
-        ] {
-            let provider = build(ProviderKind::Completions, name.clone()).unwrap();
-            assert_eq!(provider.provider_name(), name);
-        }
-    }
-
-    #[test]
-    fn responses_presets_dispatch() {
-        for name in [
-            ProviderName::OpenAI,
-            ProviderName::DeepSeek,
-            ProviderName::Grok,
-        ] {
-            let provider = build(ProviderKind::Responses, name.clone()).unwrap();
-            assert_eq!(provider.provider_name(), name);
-        }
-    }
-
-    #[test]
-    fn unsupported_combinations_return_error() {
+    fn any_provider_name_with_base_url_builds() {
         let cases = [
+            (ProviderKind::Completions, ProviderName::OpenAI),
+            (ProviderKind::Completions, ProviderName::DeepSeek),
+            (ProviderKind::Completions, ProviderName::Moonshot),
+            (ProviderKind::Completions, ProviderName::Zhipu),
             (ProviderKind::Completions, ProviderName::Anthropic),
             (ProviderKind::Completions, ProviderName::Grok),
             (ProviderKind::Completions, ProviderName::Custom("x".into())),
+            (ProviderKind::Responses, ProviderName::OpenAI),
+            (ProviderKind::Responses, ProviderName::DeepSeek),
+            (ProviderKind::Responses, ProviderName::Grok),
             (ProviderKind::Responses, ProviderName::Anthropic),
             (ProviderKind::Responses, ProviderName::Moonshot),
             (ProviderKind::Responses, ProviderName::Zhipu),
@@ -300,16 +223,35 @@ mod tests {
         ];
 
         for (kind, name) in cases {
-            let err = build(kind, name.clone()).err().unwrap();
-            match err {
-                ProviderError::UnsupportedProvider {
-                    kind: got_kind,
-                    name: got_name,
-                } => {
-                    assert_eq!(got_kind, kind);
-                    assert_eq!(got_name, name);
-                }
-                other => panic!("expected UnsupportedProvider, got {other:?}"),
+            let provider = build(kind, name.clone()).unwrap();
+            assert_eq!(provider.provider_name(), name);
+        }
+    }
+
+    #[test]
+    fn build_requires_base_url() {
+        let cases = [
+            ProviderName::OpenAI,
+            ProviderName::DeepSeek,
+            ProviderName::Moonshot,
+            ProviderName::Zhipu,
+            ProviderName::Anthropic,
+            ProviderName::Grok,
+            ProviderName::Custom("x".into()),
+        ];
+
+        for kind in [ProviderKind::Completions, ProviderKind::Responses] {
+            for name in &cases {
+                let err = ProviderBuilder::new(kind)
+                    .provider_name(name.clone())
+                    .api_key("k")
+                    .build()
+                    .err()
+                    .unwrap();
+                assert!(
+                    matches!(err, ProviderError::InvalidProviderConfig(_)),
+                    "{kind:?} + {name:?} without base_url should fail"
+                );
             }
         }
     }
@@ -345,6 +287,14 @@ mod tests {
             .err()
             .unwrap();
         assert!(matches!(err, ProviderError::InvalidProviderConfig(_)));
+
+        let err = ProviderBuilder::completions()
+            .provider_name(ProviderName::DeepSeek)
+            .api_key("k")
+            .build()
+            .err()
+            .unwrap();
+        assert!(matches!(err, ProviderError::InvalidProviderConfig(_)));
     }
 
     #[test]
@@ -374,65 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn preset_catalog_preserved_and_models_appended() {
-        let provider = ProviderBuilder::completions()
-            .provider_name(ProviderName::DeepSeek)
-            .api_key("k")
-            .add_model(ModelInfo::minimal("custom-extra", ProviderName::DeepSeek))
-            .build()
-            .unwrap();
-
-        assert_eq!(provider.provider_name(), ProviderName::DeepSeek);
-        let models = provider.known_models();
-        assert!(
-            models.iter().any(|m| m.id == "deepseek-v4-flash"),
-            "preset catalog should be preserved"
-        );
-        assert!(
-            models.iter().any(|m| m.id == "custom-extra"),
-            "added model should be present"
-        );
-    }
-
-    #[test]
-    fn all_presets_accept_added_models() {
-        let cases = [
-            (ProviderKind::Completions, ProviderName::OpenAI),
-            (ProviderKind::Completions, ProviderName::DeepSeek),
-            (ProviderKind::Completions, ProviderName::Moonshot),
-            (ProviderKind::Completions, ProviderName::Zhipu),
-            (ProviderKind::Responses, ProviderName::OpenAI),
-            (ProviderKind::Responses, ProviderName::DeepSeek),
-            (ProviderKind::Responses, ProviderName::Grok),
-        ];
-
-        for (kind, name) in cases {
-            let provider = ProviderBuilder::new(kind)
-                .provider_name(name.clone())
-                .api_key("k")
-                .add_model(ModelInfo::minimal("custom-extra", name.clone()))
-                .build()
-                .unwrap();
-
-            assert_eq!(provider.provider_name(), name);
-            assert!(
-                provider
-                    .known_models()
-                    .iter()
-                    .any(|m| m.id == "custom-extra"),
-                "{kind:?} + {name:?} should include the added model"
-            );
-        }
-    }
-
-    #[test]
-    fn preset_accepts_extra_headers() {
+    fn provider_with_base_url_accepts_extra_headers() {
         let mut headers = HeaderMap::new();
         headers.insert("x-test", "1".parse().unwrap());
 
         let provider = ProviderBuilder::responses()
             .provider_name(ProviderName::DeepSeek)
             .api_key("k")
+            .base_url("https://example.com")
             .extra_headers(headers)
             .build()
             .unwrap();
@@ -441,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn base_url_wins_over_preset_catalog() {
+    fn custom_base_url_uses_only_user_models() {
         let provider = ProviderBuilder::completions()
             .provider_name(ProviderName::DeepSeek)
             .api_key("k")
@@ -453,6 +352,27 @@ mod tests {
         let models = provider.known_models();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "custom-extra");
+    }
+
+    #[test]
+    fn model_registry_sets_known_models() {
+        let registry = ModelRegistry::from_models([
+            ModelInfo::minimal("m1", ProviderName::Custom("gw".into())),
+            ModelInfo::minimal("m2", ProviderName::Custom("gw".into())),
+        ]);
+
+        let provider = ProviderBuilder::completions()
+            .provider_name(ProviderName::Custom("gw".into()))
+            .api_key("k")
+            .base_url("https://example.com")
+            .model_registry(registry)
+            .add_model(ModelInfo::minimal("m3", ProviderName::Custom("gw".into())))
+            .build()
+            .unwrap();
+
+        let mut ids: Vec<String> = provider.known_models().into_iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["m1", "m2", "m3"]);
     }
 
     #[test]

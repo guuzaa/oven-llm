@@ -279,6 +279,11 @@ impl RequestBuilder {
         self
     }
 
+    pub fn prompt(mut self, msg: impl Into<String>) -> Self {
+        self.messages.push(Message::user_text(msg.into()));
+        self
+    }
+
     /// 追加一个工具。
     pub fn tool(mut self, tool: Tool) -> Self {
         self.tools.push(tool);

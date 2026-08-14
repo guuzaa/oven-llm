@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use oven_llm::{
-    Delta, Message, ModelId, ProviderBuilder, ProviderKind, ProviderName, Request, Router,
+    Delta, ModelId, ProviderBuilder, ProviderKind, ProviderName, Request, Router,
     RouterError, StreamEvent, ThinkingMode,
 };
 
@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 非流式调用（无真实 key 时会打印错误并继续）。
     let request = Request::builder()
         .model("deepseek-v4-flash")
-        .message(Message::user_text("用一句话介绍 Rust 语言。"))
-        .temperature(0.0)
-        .thinking(ThinkingMode::Enabled)
+        .prompt("用一句话介绍 Rust 语言。")
+        .temperature(0.01)
+        .thinking(ThinkingMode::Disabled)
         .build()?;
     match router.complete(&request).await {
         Ok(response) => println!("complete() -> {}", response.text()),
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 5. 流式调用。
-    std::thread::sleep(Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_secs(1)).await;
     match router.stream(&request).await {
         Ok(mut stream) => {
             print!("stream(): ");

@@ -7,6 +7,7 @@ pub(crate) mod http;
 pub mod model;
 mod registry;
 mod responses;
+mod router;
 pub mod validate;
 
 pub use builder::ProviderBuilder;
@@ -15,6 +16,7 @@ pub use error::{ProviderError, Result};
 pub use model::{ModelCapabilities, ModelInfo, Pricing};
 pub use registry::ModelRegistry;
 pub use responses::ResponsesProvider;
+pub use router::{Router, RouterError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use validate::{ValidationError, estimate_input_tokens, validate_request};
 

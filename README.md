@@ -22,6 +22,8 @@ changing one constructor call; application code never touches wire formats.
 - **Unified `Provider` trait** — `complete`, `stream`, and `list_models` behind one trait. Any
   provider can be used as `&dyn Provider`, so harness/application code is fully decoupled from
   vendor wire formats.
+- **Model-based routing** — `Router` registers multiple providers and dispatches `complete` /
+  `stream` by `Request.model`, so mixing or switching vendors is configuration, not code.
 - **Provider-agnostic domain model** — `Request` (builder API), `Message` with `ContentBlock`
   (text / thinking / image / tool use / tool result), `Response` with helpers like `text()`,
   `thinking()` and `tool_uses()`, all serializable and round-trippable.
@@ -111,6 +113,40 @@ without a `base_url`. Custom gateways work too: add `.base_url(...)` (optionally
 `.extra_headers(...)` / `.known_models(...)` / `.add_model(...)`), and any `ProviderName`,
 including `Custom(...)`, is accepted.
 
+### Routing across providers (`Router`)
+
+When an application talks to several providers at once, `Router` picks the right provider for
+each request automatically — the caller only maintains a "model → provider" registration, and
+`Request.model` decides where the call goes:
+
+```rust
+use oven_llm::{ProviderBuilder, ProviderKind, ProviderName, Request, Router};
+
+let deepseek = ProviderBuilder::new(ProviderKind::Completions)
+    .provider_name(ProviderName::DeepSeek)
+    .api_key(deepseek_key)
+    .build()?;
+let zhipu = ProviderBuilder::new(ProviderKind::Completions)
+    .provider_name(ProviderName::Zhipu)
+    .api_key(zhipu_key)
+    .build()?;
+
+let mut router = Router::new();
+router
+    .register(deepseek)
+    .register(zhipu)
+    .route("deepseek-", &ProviderName::DeepSeek)
+    .route("glm-", &ProviderName::Zhipu);
+
+let response = router.complete(&request).await?; // request.model decides the provider
+let mut stream = router.stream(&request).await?; // same unified StreamEvent stream
+```
+
+Dispatch priority: exact `alias(...)` bindings first, then the longest matching `route(...)`
+prefix (earliest rule wins ties), then each provider's static model catalog in registration
+order. If nothing matches, `complete` / `stream` return `RouterError::UnknownModel` instead of
+silently passing the request to the wrong vendor.
+
 ## Supported protocols & providers
 
 Each provider translates domain models to its own wire format via dedicated
@@ -146,7 +182,7 @@ Anything not covered by a preset can be reached through `with_base_url(...)` /
 
 ## Examples
 
-The repository ships three runnable examples. None of them requires a real API key — they fall
+The repository ships four runnable examples. None of them requires a real API key — they fall
 back to a placeholder key and print errors instead of panicking, so the full call flow can be
 observed offline:
 
@@ -154,6 +190,7 @@ observed offline:
 cargo run --example completions_usage
 cargo run --example responses_usage
 cargo run --example agent_loop -- "summarize this repository"
+cargo run --example router_usage
 ```
 
 ### Streaming with `StreamCollector`
@@ -269,7 +306,7 @@ Unknown models pass through in a permissive mode and are left to the upstream se
 | `src/provider/completions/` | Chat Completions wire types, encoder, decoder, static model catalogs, `CompletionsProvider` |
 | `src/provider/responses/` | Responses API wire types, encoder, decoder, static model catalogs, `ResponsesProvider` |
 | `src/provider/http.rs` | Shared `isahc` transport: headers, endpoint joining, status-code mapping, SSE bridge |
-| `examples/` | Runnable examples: `completions_usage`, `responses_usage`, `agent_loop` |
+| `examples/` | Runnable examples: `completions_usage`, `responses_usage`, `agent_loop`, `router_usage` |
 | `scripts/` | Shell scripts + logs used while manually validating against real vendors |
 
 ## Contributing

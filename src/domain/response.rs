@@ -1,6 +1,6 @@
 //! `Usage` / `StopReason` / `Response`：provider 无关的非流式响应模型。
 
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,24 @@ fn is_zero(v: &u32) -> bool {
 impl Usage {
     pub fn reset(&mut self) {
         *self = Default::default();
+    }
+}
+
+impl Sub for Usage {
+    type Output = Usage;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Usage {
+            input_tokens: self.input_tokens.saturating_sub(rhs.input_tokens),
+            output_tokens: self.output_tokens.saturating_sub(rhs.output_tokens),
+            cache_read_tokens: self.cache_read_tokens.saturating_sub(rhs.cache_read_tokens),
+            reasoning_tokens: self.reasoning_tokens.saturating_sub(rhs.reasoning_tokens),
+        }
+    }
+}
+
+impl SubAssign for Usage {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
     }
 }
 
@@ -172,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_add_sums_all_fields() {
+    fn usage_add_sub_all_fields() {
         let a = Usage {
             input_tokens: 10,
             output_tokens: 20,
@@ -194,10 +212,19 @@ mod tests {
                 reasoning_tokens: 6,
             }
         );
+        assert_eq!(
+            a - b,
+            Usage {
+                input_tokens: 5,
+                output_tokens: 13,
+                cache_read_tokens: 2,
+                reasoning_tokens: 2,
+            }
+        )
     }
 
     #[test]
-    fn usage_add_assign_accumulates() {
+    fn usage_add_sub_assign_accumulates() {
         let mut total = Usage::default();
         total += Usage {
             input_tokens: 1,
@@ -218,6 +245,21 @@ mod tests {
                 output_tokens: 22,
                 cache_read_tokens: 33,
                 reasoning_tokens: 44,
+            }
+        );
+        total -= Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_read_tokens: 30,
+            reasoning_tokens: 40,
+        };
+        assert_eq!(
+            total,
+            Usage {
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_read_tokens: 3,
+                reasoning_tokens: 4,
             }
         );
     }

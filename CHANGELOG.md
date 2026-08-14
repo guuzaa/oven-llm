@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.3.0] - 2026-08-14
+### Added
+- New `Router` routing layer: register multiple providers and dispatch
+  `complete` / `stream` by `Request.model`, so callers maintain a single
+  "model → provider" registration instead of switching providers manually.
+  - Dispatch priority: exact `alias(...)` bindings, then the longest matching
+    `route(...)` prefix (earliest rule wins ties), then each provider's static
+    model catalog in registration order; no match returns
+    `RouterError::UnknownModel` instead of silently routing to the wrong vendor.
+  - `RouterError` with `NoProviderRegistered`, `UnknownModel`, and `Provider`
+    variants; rules reference providers by `ProviderName` and resolve at
+    dispatch time, so `route` / `alias` work before or after `register`.
+- New `router_usage` example showing routing across DeepSeek / Zhipu providers.
+- `Display` impls for `ProviderName`, `ReasoningEffort`, and `ThinkingMode`
+  (wire-style lowercase strings for the latter two).
+- `Sub` and `SubAssign` impls for `Usage`, with per-field saturating
+  subtraction (complements the existing `Add` / `AddAssign`).
+
+### Fixed
+- `RequestBuilder::thinking(ThinkingMode::Enabled)` now defaults
+  `reasoning_effort` to `Medium` when it hasn't been set explicitly, so
+  enabling thinking no longer requires toggling `reasoning_effort`.
+- Completions decoder falls back to `prompt_tokens_details.reasoning_tokens`
+  when `completion_tokens_details.reasoning_tokens` is absent, since some
+  providers report reasoning tokens under the prompt details.
+
+### Changed
+- Completions encoder builds `thinking` / `reasoning_effort` wire values via
+  the new `Display` impls (same wire format, less duplicated matching).
+
 ## [0.2.2] - 2026-08-07
 ### Added
 - `ProviderName` now uses a hand-written Serialize/Deserialize impl:

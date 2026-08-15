@@ -61,11 +61,16 @@ pub(crate) struct StreamOptions {
 
 /// 请求侧的一条消息：`role` 取值为 `"system"` / `"user"` / `"assistant"` /
 /// `"tool"`，具体取值范围由 encoder 保证。
+///
+/// `reasoning_content` 仅 `role: "assistant"` 消息携带：回传上一轮的思考
+/// 内容，保证多轮对话（尤其是交错式思考）与 KV cache 前缀一致。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub(crate) struct WireMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WireToolCall>>,
     /// 仅 `role: "tool"` 消息携带：对应触发该结果的 `tool_calls[].id`。

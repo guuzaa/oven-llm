@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use oven_llm::{
-    Delta, ModelId, ProviderBuilder, ProviderKind, ProviderName, Request, Router,
-    RouterError, StreamEvent, ThinkingMode,
+    Delta, ModelId, ProviderBuilder, ProviderKind, ProviderName, Request, Router, RouterError,
+    StreamEvent, ThinkingMode,
 };
 
 fn api_key(env: &str) -> String {

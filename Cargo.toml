@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "A Rust library for calling LLM providers with a unified API."
+repository = "https://github.com/guuzaa/oven-llm"
 authors = ["Jowell Young <guza@duck.com>"]
 build = false
 include = ["README.md", "Cargo.toml", "LICENSE", "src/**/*.rs"]

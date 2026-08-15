@@ -73,6 +73,11 @@ async fn provider_example(provider: Box<dyn Provider>, request: &Request) {
                         print!("{text}");
                         io::stdout().flush().unwrap();
                     }
+                    Ok(StreamEvent::MessageDelta {
+                        usage: Some(usage), ..
+                    }) => {
+                        println!("\nusage: {:?}", usage)
+                    }
                     Ok(_) => {}
                     Err(err) => {
                         eprintln!("\nstream() error (expected without a real API key): {err}");

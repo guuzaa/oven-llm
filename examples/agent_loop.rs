@@ -45,7 +45,7 @@ async fn main() -> ExampleResult<()> {
              Make the requested change, then give a concise final summary.",
             workspace_root.display()
         ))
-        .message(Message::user_text(task))
+        .prompt(task)
         .tools(coding_tools())
         .temperature(0.1)
         .thinking(oven_llm::ThinkingMode::Enabled)
@@ -56,6 +56,7 @@ async fn main() -> ExampleResult<()> {
         let response = collect_streamed_response(provider.as_ref(), &request).await?;
         let requests_tools =
             response.stop_reason == Some(StopReason::ToolUse) && response.has_tool_use();
+        println!("usage: {:?}", response.usage);
 
         // 关键顺序：先提交完整的 assistant 消息（含 tool_use），再执行工具并追加结果。
         // OpenAI 兼容接口要求 role=tool 紧跟在发起该调用的 assistant 消息之后。

@@ -262,16 +262,18 @@ fn encode_tool_message(
     Ok(())
 }
 
-/// 编码一条 `Role::Assistant` 消息：合并 `Text` 块为 `content`，将
-/// `ToolUse` 块转换为 `tool_calls`；其余内容块（`Image`、`ToolResult`）返回
-/// `EncodeError::InvalidContent`。
+/// 编码一条 `Role::Assistant` 消息：合并 `Text` 块为 `content`，合并
+/// `Thinking` 块为 `reasoning_content`（交错式思考需要回传思考内容以保证
+/// 多轮上下文一致），将 `ToolUse` 块转换为 `tool_calls`；其余内容块
+/// （`Image`、`ToolResult`）返回 `EncodeError::InvalidContent`。
 fn encode_assistant_message(message: &Message) -> Result<WireMessage, CompletionsEncodeError> {
     let mut text = String::new();
+    let mut reasoning = String::new();
     let mut tool_calls = Vec::new();
 
     for block in &message.content {
         match block {
-            ContentBlock::Thinking { .. } => { /* 不回传思维内容 */ }
+            ContentBlock::Thinking { thinking } => reasoning.push_str(thinking),
             ContentBlock::Text { text: t } => text.push_str(t),
             ContentBlock::ToolUse { id, name, input } => {
                 tool_calls.push(WireToolCall {
@@ -294,6 +296,11 @@ fn encode_assistant_message(message: &Message) -> Result<WireMessage, Completion
     Ok(WireMessage {
         role: "assistant".to_string(),
         content: if text.is_empty() { None } else { Some(text) },
+        reasoning_content: if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning)
+        },
         tool_calls: if tool_calls.is_empty() {
             None
         } else {
@@ -550,7 +557,37 @@ mod tests {
         let message = Message::assistant(vec![ContentBlock::text("a"), ContentBlock::text("b")]);
         let wire = encode_assistant_message(&message).unwrap();
         assert_eq!(wire.content, Some("ab".to_string()));
+        assert_eq!(wire.reasoning_content, None);
         assert_eq!(wire.tool_calls, None);
+    }
+
+    #[test]
+    fn assistant_thinking_passes_through_to_reasoning_content() {
+        let message = Message::assistant(vec![ContentBlock::thinking("let me think")]);
+        let wire = encode_assistant_message(&message).unwrap();
+        assert_eq!(wire.content, None);
+        assert_eq!(wire.reasoning_content, Some("let me think".to_string()));
+        assert_eq!(wire.tool_calls, None);
+    }
+
+    #[test]
+    fn assistant_interleaved_thinking_and_text_concatenate() {
+        let message = Message::assistant(vec![
+            ContentBlock::thinking("step one"),
+            ContentBlock::text("answer one"),
+            ContentBlock::thinking("step two"),
+            ContentBlock::text("answer two"),
+        ]);
+        let wire = encode_assistant_message(&message).unwrap();
+        assert_eq!(wire.content, Some("answer oneanswer two".to_string()));
+        assert_eq!(wire.reasoning_content, Some("step onestep two".to_string()));
+    }
+
+    #[test]
+    fn assistant_no_thinking_omits_reasoning_content() {
+        let message = Message::assistant(vec![ContentBlock::text("hi")]);
+        let wire = encode_assistant_message(&message).unwrap();
+        assert_eq!(wire.reasoning_content, None);
     }
 
     #[test]

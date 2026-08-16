@@ -52,12 +52,17 @@ changing one constructor call; application code never touches wire formats.
   validation, and wire encode/decode failures, with full `std::error::Error` support.
 
 ## Quick start
+Run the following Cargo command in your project directory:
 
-Add to `Cargo.toml`:
+```sh
+cargo add oven-llm
+```
+
+Or add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-oven-llm = "0.2"
+oven-llm = "0.3.1"
 ```
 
 A minimal non-streaming call:

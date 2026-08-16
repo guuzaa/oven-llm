@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.1] - 2026-08-16
+### Added
+- `RequestBuilder::prompt(...)` appends a user text message, so simple
+  single-turn requests no longer need `Message::user_text` at the call site.
+- `From<&str>` for `ProviderName`: case-insensitive parsing with aliases
+  (`kimi` → Moonshot, `glm` → Zhipu); unknown strings become `Custom`.
+- `Display` for `ProviderKind` (lowercase slugs: `completions` / `responses` /
+  `messages`).
+
+### Fixed
+- Completions encoder now forwards assistant `Thinking` blocks as
+  `reasoning_content` on the wire (concatenating interleaved thinking chunks),
+  so multi-turn conversations keep the thinking prefix consistent with the
+  previous turn instead of dropping it.
+
 ## [0.3.0] - 2026-08-14
 ### Added
 - New `Router` routing layer: register multiple providers and dispatch

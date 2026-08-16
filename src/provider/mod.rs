@@ -63,6 +63,20 @@ pub enum ProviderName {
     Custom(String),
 }
 
+impl From<&str> for ProviderName {
+    fn from(value: &str) -> Self {
+        match value.to_ascii_lowercase().as_str() {
+            "openai" => ProviderName::OpenAI,
+            "deepseek" => ProviderName::DeepSeek,
+            "moonshot" | "kimi" => ProviderName::Moonshot,
+            "zhipu" | "glm" => ProviderName::Zhipu,
+            "anthropic" => ProviderName::Anthropic,
+            "grok" => ProviderName::Grok,
+            other => ProviderName::Custom(other.to_string()),
+        }
+    }
+}
+
 impl Serialize for ProviderName {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         match self {
@@ -124,6 +138,16 @@ pub enum ProviderKind {
     Responses,
     /// Anthropic Messages API (Not Implemented yet)
     Messages,
+}
+
+impl fmt::Display for ProviderKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderKind::Completions => f.write_str("completions"),
+            ProviderKind::Responses => f.write_str("responses"),
+            ProviderKind::Messages => f.write_str("messages"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +260,26 @@ mod tests {
     }
 
     #[test]
+    fn provider_name_from_str() {
+        let cases = [
+            ("OpenAI", ProviderName::OpenAI),
+            ("Openai", ProviderName::OpenAI),
+            ("DeepSeek", ProviderName::DeepSeek),
+            ("Grok", ProviderName::Grok),
+            ("moonshot", ProviderName::Moonshot),
+            ("kimi", ProviderName::Moonshot),
+            ("Anthropic", ProviderName::Anthropic),
+            ("zhipu", ProviderName::Zhipu),
+            ("glm", ProviderName::Zhipu),
+            ("my", ProviderName::Custom("my".into())),
+        ];
+
+        for (s, expected) in cases {
+            assert_eq!(ProviderName::from(s), expected);
+        }
+    }
+
+    #[test]
     fn provider_kind_serde_roundtrip() {
         let kinds = [
             ProviderKind::Completions,
@@ -257,5 +301,12 @@ mod tests {
             serde_json::from_str::<ProviderKind>(r#""completions""#).unwrap(),
             ProviderKind::Completions
         );
+    }
+
+    #[test]
+    fn provider_kind_into_slug() {
+        assert_eq!(ProviderKind::Responses.to_string(), "responses");
+        assert_eq!(ProviderKind::Messages.to_string(), "messages");
+        assert_eq!(ProviderKind::Completions.to_string(), "completions");
     }
 }

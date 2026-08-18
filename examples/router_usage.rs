@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 自定义 OpenAI 兼容网关：必须给 base_url；协议默认 completions。
     // 网关若只说 Responses，在 builder 上加 `.kind(ProviderKind::Responses)`。
     let my_proxy = ProviderName::Custom("my-proxy".into());
-    let gateway = ProviderBuilder::provider()
+    let gateway = ProviderBuilder::completions()
         .provider_name(my_proxy.clone())
         .api_key(api_key("MY_PROXY_API_KEY"))
         .base_url("https://gateway.example.com/v1")

@@ -1,16 +1,19 @@
 //! `ModelInfo` / `ModelCapabilities` / `Pricing`：模型能力身份证。
 
-use crate::ProviderName;
+use crate::{ProviderKind, ProviderName};
 
 /// 描述单个模型的元数据（所属 provider、上下文窗口、最大输出 token、能力集合、定价）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
+    /// 上游 wire id，不含 vendor 前缀。
     pub id: String,
     pub provider: ProviderName,
     pub context_window: u32,
     pub max_output_tokens: u32,
     pub capabilities: ModelCapabilities,
     pub pricing: Option<Pricing>,
+    /// 该模型会说的协议；第一个是默认。空表示只走 Completions。
+    pub protocols: Vec<ProviderKind>,
 }
 
 impl ModelInfo {
@@ -25,6 +28,31 @@ impl ModelInfo {
             max_output_tokens: 0,
             capabilities: ModelCapabilities::default(),
             pricing: None,
+            protocols: Vec::new(),
+        }
+    }
+
+    pub fn default_protocol(&self) -> ProviderKind {
+        self.protocols
+            .first()
+            .copied()
+            .unwrap_or(ProviderKind::Completions)
+    }
+
+    pub fn supports_protocol(&self, kind: ProviderKind) -> bool {
+        if self.protocols.is_empty() {
+            kind == ProviderKind::Completions
+        } else {
+            self.protocols.contains(&kind)
+        }
+    }
+
+    /// `vendor/wire-id`，vendor 用 [`ProviderName::slug`]。
+    pub fn slug(&self) -> String {
+        if self.id.contains('/') {
+            self.id.clone()
+        } else {
+            format!("{}/{}", self.provider.slug(), self.id)
         }
     }
 }
@@ -51,6 +79,7 @@ pub struct Pricing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProviderKind;
 
     #[test]
     fn minimal_fills_zero_defaults() {
@@ -61,5 +90,8 @@ mod tests {
         assert_eq!(info.max_output_tokens, 0);
         assert_eq!(info.capabilities, ModelCapabilities::default());
         assert_eq!(info.pricing, None);
+        assert!(info.protocols.is_empty());
+        assert_eq!(info.default_protocol(), ProviderKind::Completions);
+        assert_eq!(info.slug(), "openai/gpt-4");
     }
 }

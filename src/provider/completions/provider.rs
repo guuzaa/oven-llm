@@ -328,7 +328,13 @@ impl Provider for CompletionsProvider {
 
     /// 通过构造时建立的哈希索引查找静态模型元数据。
     fn resolve_model(&self, id: &ModelId) -> Option<&ModelInfo> {
-        self.model_catalog.get(id)
+        self.model_catalog
+            .get(id)
+            .or_else(|| self.model_catalog.get(&ModelId::from(id.wire_id())))
+    }
+
+    fn protocol(&self) -> Option<crate::ProviderKind> {
+        Some(crate::ProviderKind::Completions)
     }
 
     fn provider_name(&self) -> ProviderName {

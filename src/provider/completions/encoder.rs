@@ -83,7 +83,7 @@ pub(crate) fn encode_request(
     let reasoning_effort = req.reasoning_effort.map(|e| e.to_string());
 
     Ok(ChatCompletionRequest {
-        model: req.model.as_str().to_owned(),
+        model: req.model.wire_id().to_owned(),
         messages,
         tools,
         tool_choice: Some(encode_tool_choice(&req.tool_choice)),
@@ -731,6 +731,37 @@ mod tests {
 
     #[test]
     fn encode_request_maps_tools_and_sampling() {
+        let req = Request {
+            model: crate::domain::ModelId::from("gpt-4"),
+            tools: vec![Tool {
+                name: "get_weather".to_string(),
+                description: None,
+                input_schema: serde_json::json!({}),
+            }],
+            sampling: SamplingParams {
+                temperature: Some(0.5),
+                top_p: Some(0.9),
+                max_tokens: Some(100),
+                stop: None,
+            },
+            ..Default::default()
+        };
+        let wire = encode_request(&req, true).unwrap();
+        assert_eq!(wire.model, "gpt-4");
+    }
+
+    #[test]
+    fn encode_request_sends_wire_id_not_slug() {
+        let req = Request {
+            model: crate::domain::ModelId::from("deepseek/deepseek-v4-flash:responses"),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        assert_eq!(wire.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn encode_request_maps_rest() {
         let req = Request {
             model: crate::domain::ModelId::from("gpt-4"),
             tools: vec![Tool {

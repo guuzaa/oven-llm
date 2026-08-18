@@ -1,8 +1,9 @@
 //! `oven-llm` Router 路由层示例：按模型 ID 自动派发 provider。
 //!
 //! 演示：
-//! - 用 `ProviderBuilder` 构造 DeepSeek / Zhipu 两个 provider
-//! - 注册进 `Router`，并用前缀规则显式指定归属
+//! - 用 `ProviderBuilder` 构造已知厂商（DeepSeek / Zhipu）
+//! - 再挂一个自定义网关：`name` + `base_url` + key，协议默认 completions
+//! - 注册进 `Router`；slug 的 vendor 段决定派发（`my-proxy/...` → 自定义）
 //! - 通过 `router.complete` / `router.stream` 自动派发
 //! - 未注册模型返回 `RouterError::UnknownModel`
 //!
@@ -14,7 +15,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use oven_llm::{
-    Delta, ModelId, ProviderBuilder, ProviderKind, ProviderName, Request, Router, RouterError,
+    Delta, ModelId, ModelInfo, ProviderBuilder, ProviderName, Request, Router, RouterError,
     StreamEvent, ThinkingMode,
 };
 
@@ -25,25 +26,36 @@ fn api_key(env: &str) -> String {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 用统一入口构造两个 provider。
-    let deepseek = ProviderBuilder::new(ProviderKind::Completions)
+    let deepseek = ProviderBuilder::provider()
         .provider_name(ProviderName::DeepSeek)
         .api_key(api_key("DEEPSEEK_API_KEY"))
         .build()?;
-    let zhipu = ProviderBuilder::new(ProviderKind::Completions)
+    let zhipu = ProviderBuilder::provider()
         .provider_name(ProviderName::Zhipu)
         .api_key(api_key("ZHIPU_API_KEY"))
         .build()?;
 
-    // 2. 注册进 Router，并显式添加前缀规则（也可以依赖静态目录自动派发）。
+    // 自定义 OpenAI 兼容网关：必须给 base_url；协议默认 completions。
+    // 网关若只说 Responses，在 builder 上加 `.kind(ProviderKind::Responses)`。
+    let my_proxy = ProviderName::Custom("my-proxy".into());
+    let gateway = ProviderBuilder::provider()
+        .provider_name(my_proxy.clone())
+        .api_key(api_key("MY_PROXY_API_KEY"))
+        .base_url("https://gateway.example.com/v1")
+        .add_model(ModelInfo::minimal("local-llama", my_proxy))
+        .build()?;
+
+    // 2. 注册进 Router。slug 的 vendor 段决定派发。
     let mut router = Router::new();
-    router
-        .register(deepseek)
-        .register(zhipu)
-        .alias("deepseek-v4-flash", &ProviderName::DeepSeek)
-        .route("glm-", &ProviderName::Zhipu);
+    router.register(deepseek).register(zhipu).register(gateway);
 
     // 3. 展示派发解析与未命中错误。
-    for id in ["deepseek-v4-flash", "glm-5.2", "unknown-model"] {
+    for id in [
+        "deepseek/deepseek-v4-flash",
+        "zhipu/glm-5.3",
+        "my-proxy/local-llama",
+        "xai/grok-4.6",
+    ] {
         match router.provider(&ModelId::from(id)) {
             Ok(provider) => println!("{id} -> {}", provider.provider_name()),
             Err(RouterError::UnknownModel(model)) => println!("{id} -> unknown: {model}"),
@@ -53,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. 非流式调用（无真实 key 时会打印错误并继续）。
     let request = Request::builder()
-        .model("deepseek-v4-flash")
+        .model("deepseek/deepseek-v4-flash")
         .prompt("用一句话介绍 Rust 语言。")
         .temperature(0.01)
         .thinking(ThinkingMode::Disabled)

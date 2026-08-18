@@ -1,6 +1,7 @@
 //! `provider` 层：`Provider` trait、错误类型与模型能力信息。
 
 mod builder;
+pub(crate) mod catalog;
 mod completions;
 mod error;
 pub(crate) mod http;
@@ -44,6 +45,11 @@ pub trait Provider: Send + Sync {
     /// 查找静态模型元数据。未命中表示 provider 将以宽松策略透传该模型请求。
     fn resolve_model(&self, id: &ModelId) -> Option<&ModelInfo>;
 
+    /// 该实现对应的 wire 协议。Router 按 slug 选协议时使用；默认未知。
+    fn protocol(&self) -> Option<ProviderKind> {
+        None
+    }
+
     /// 从 provider 的 `/models` 端点动态获取模型列表（能力字段通常不可用）。
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         Ok(vec![])
@@ -63,6 +69,25 @@ pub enum ProviderName {
     Custom(String),
 }
 
+impl ProviderName {
+    /// slug 用的规范 vendor 名（`xai` 而不是 `grok`）。
+    pub fn slug(&self) -> &str {
+        match self {
+            ProviderName::OpenAI => "openai",
+            ProviderName::DeepSeek => "deepseek",
+            ProviderName::Moonshot => "moonshot",
+            ProviderName::Zhipu => "zhipu",
+            ProviderName::Anthropic => "anthropic",
+            ProviderName::Grok => "xai",
+            ProviderName::Custom(name) => name.as_str(),
+        }
+    }
+
+    pub fn matches_vendor(&self, vendor: &str) -> bool {
+        crate::canonical_vendor(vendor) == self.slug()
+    }
+}
+
 impl From<&str> for ProviderName {
     fn from(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
@@ -71,7 +96,7 @@ impl From<&str> for ProviderName {
             "moonshot" | "kimi" => ProviderName::Moonshot,
             "zhipu" | "glm" => ProviderName::Zhipu,
             "anthropic" => ProviderName::Anthropic,
-            "grok" => ProviderName::Grok,
+            "grok" | "xai" => ProviderName::Grok,
             other => ProviderName::Custom(other.to_string()),
         }
     }
@@ -85,7 +110,7 @@ impl Serialize for ProviderName {
             ProviderName::Moonshot => serializer.serialize_str("moonshot"),
             ProviderName::Zhipu => serializer.serialize_str("zhipu"),
             ProviderName::Anthropic => serializer.serialize_str("anthropic"),
-            ProviderName::Grok => serializer.serialize_str("grok"),
+            ProviderName::Grok => serializer.serialize_str("xai"),
             ProviderName::Custom(name) => {
                 serializer.serialize_str(&format!("custom({})", name.to_lowercase()))
             }
@@ -102,7 +127,7 @@ impl<'de> Deserialize<'de> for ProviderName {
             "moonshot" => ProviderName::Moonshot,
             "zhipu" => ProviderName::Zhipu,
             "anthropic" => ProviderName::Anthropic,
-            "grok" => ProviderName::Grok,
+            "grok" | "xai" => ProviderName::Grok,
             _ => match raw
                 .strip_prefix("custom(")
                 .and_then(|s| s.strip_suffix(')'))
@@ -266,6 +291,7 @@ mod tests {
             ("Openai", ProviderName::OpenAI),
             ("DeepSeek", ProviderName::DeepSeek),
             ("Grok", ProviderName::Grok),
+            ("xai", ProviderName::Grok),
             ("moonshot", ProviderName::Moonshot),
             ("kimi", ProviderName::Moonshot),
             ("Anthropic", ProviderName::Anthropic),

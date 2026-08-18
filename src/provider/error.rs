@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use super::{ProviderKind, ProviderName};
-use crate::domain::StreamCollectorError;
+use crate::domain::{ModelId, StreamCollectorError};
 use crate::provider::completions::{CompletionsDecodeError, CompletionsEncodeError};
 use crate::provider::responses::{
     DecodeError as ResponsesDecodeError, EncodeError as ResponsesEncodeError,
@@ -58,6 +58,12 @@ pub enum ProviderError {
     /// 统一构造入口（`ProviderBuilder`）配置缺失或相互冲突。
     #[error("invalid provider config: {0}")]
     InvalidProviderConfig(String),
+    /// Router 尚未注册任何 provider。
+    #[error("no provider registered")]
+    NoProviderRegistered,
+    /// Router 找不到匹配该模型的 provider。
+    #[error("no registered provider or route matches model {0}")]
+    UnknownModel(ModelId),
 }
 
 impl From<StreamCollectorError> for ProviderError {

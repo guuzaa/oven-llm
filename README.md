@@ -122,35 +122,34 @@ including `Custom(...)`, is accepted.
 
 When an application talks to several providers at once, `Router` picks the right provider for
 each request automatically — the caller only maintains a "model → provider" registration, and
-`Request.model` decides where the call goes:
+`Request.model` decides where the call goes. Prefer `vendor/wire-id` slugs
+(`deepseek/deepseek-v4-flash`); a bare id is qualified when the router only has
+one vendor. Protocol (`completions` / `responses`) comes from the catalog or an
+optional `:responses` suffix — callers do not pick `ProviderKind` per request.
 
 ```rust
-use oven_llm::{ProviderBuilder, ProviderKind, ProviderName, Request, Router};
+use oven_llm::{ProviderBuilder, ProviderName, Request, Router};
 
-let deepseek = ProviderBuilder::new(ProviderKind::Completions)
+let deepseek = ProviderBuilder::provider()
     .provider_name(ProviderName::DeepSeek)
     .api_key(deepseek_key)
     .build()?;
-let zhipu = ProviderBuilder::new(ProviderKind::Completions)
+let zhipu = ProviderBuilder::provider()
     .provider_name(ProviderName::Zhipu)
     .api_key(zhipu_key)
     .build()?;
 
 let mut router = Router::new();
-router
-    .register(deepseek)
-    .register(zhipu)
-    .route("deepseek-", &ProviderName::DeepSeek)
-    .route("glm-", &ProviderName::Zhipu);
+router.register(deepseek).register(zhipu);
 
 let response = router.complete(&request).await?; // request.model decides the provider
 let mut stream = router.stream(&request).await?; // same unified StreamEvent stream
 ```
 
-Dispatch priority: exact `alias(...)` bindings first, then the longest matching `route(...)`
-prefix (earliest rule wins ties), then each provider's static model catalog in registration
-order. If nothing matches, `complete` / `stream` return `RouterError::UnknownModel` instead of
-silently passing the request to the wrong vendor.
+Dispatch uses the vendor segment of `Request.model` (`deepseek/...` → the DeepSeek
+registration), then each provider's static catalog. A bare id is qualified when only one
+vendor is registered. If nothing matches, `complete` / `stream` return
+`RouterError::UnknownModel` instead of silently passing the request to the wrong vendor.
 
 ## Supported protocols & providers
 

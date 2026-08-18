@@ -9,6 +9,7 @@ pub mod tool;
 pub use message::{ContentBlock, ImageSource, Message, Role};
 pub use request::{
     BuilderError, ModelId, ReasoningEffort, Request, RequestBuilder, SamplingParams, ThinkingMode,
+    canonical_vendor,
 };
 pub use response::{Response, StopReason, Usage};
 pub use stream::{Delta, StreamCollector, StreamCollectorError, StreamEvent};

@@ -188,6 +188,7 @@ mod tests {
                 max_concurrent_tools: None,
             },
             pricing: None,
+            protocols: Vec::new(),
         }
     }
 

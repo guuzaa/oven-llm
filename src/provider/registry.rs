@@ -80,6 +80,7 @@ mod tests {
             max_output_tokens: 100,
             capabilities: ModelCapabilities::default(),
             pricing: None,
+            protocols: Vec::new(),
         }
     }
 

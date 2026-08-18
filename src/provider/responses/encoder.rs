@@ -49,7 +49,7 @@ pub(crate) fn encode_request(req: &Request, stream: bool) -> Result<ResponseRequ
     };
 
     Ok(ResponseRequest {
-        model: req.model.as_str().to_owned(),
+        model: req.model.wire_id().to_owned(),
         instructions: req.system.clone(),
         input: if input.is_empty() { None } else { Some(input) },
         tools,

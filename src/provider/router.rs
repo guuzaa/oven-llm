@@ -1,29 +1,20 @@
-//! `Router`：按模型 ID 把请求派发到已注册 provider 的路由层。
+//! `Router`：按 `Request.model` 把请求派发到已注册 provider。
 //!
-//! `Router` 组合多个 [`Provider`]（例如通过 [`ProviderBuilder`](crate::ProviderBuilder)
-//! 构造的 `Box<dyn Provider>`），并以 `Request.model`（[`ModelId`]）为键自动选择
-//! 目标 provider。调用方只需维护"模型 → provider"的注册关系，不再需要手动保持
-//! provider 与模型同步。
+//! 派发顺序：
+//! 1. slug 的 vendor 段匹配已注册 provider（再按 `:variant` / 目录默认协议选实现）；
+//! 2. 各 provider 静态目录（[`Provider::resolve_model`]，先注册者胜出）；
+//! 3. 均未命中则返回 [`RouterError::UnknownModel`]。
 //!
-//! 派发优先级（由高到低）：
-//! 1. [`Router::alias`] 显式绑定的精确模型 ID；
-//! 2. [`Router::route`] 配置的前缀规则（最长前缀优先；等长时先注册的规则优先）；
-//! 3. 按注册顺序扫描各 provider 的静态模型目录
-//!    （[`Provider::resolve_model`] 命中即归属，先注册者胜出）；
-//! 4. 均未命中则返回 [`RouterError::UnknownModel`]。
-//!
-//! 规则按 [`Provider::provider_name`] 引用 provider，解析发生在派发时，因此
-//! `route`/`alias` 可以写在 [`register`](Self::register) 之前或之后；指向未注册
-//! provider 名称的规则会被跳过。
+//! 裸 id 在只注册了一家 vendor 时会先补成 `vendor/wire-id`。
 
-use std::cmp::Reverse;
-use std::collections::HashMap;
-
+use async_trait::async_trait;
 use futures::stream::BoxStream;
 use thiserror::Error;
 
 use crate::domain::{ModelId, Request, Response, StreamEvent};
-use crate::provider::{Provider, ProviderError, ProviderName};
+use crate::provider::catalog;
+use crate::provider::model::ModelInfo;
+use crate::provider::{Provider, ProviderError, ProviderKind, ProviderName};
 
 /// `Router` 派发失败或转发 provider 失败时的错误类型。
 #[derive(Debug, Error)]
@@ -39,15 +30,21 @@ pub enum RouterError {
     Provider(#[from] ProviderError),
 }
 
+impl From<RouterError> for ProviderError {
+    fn from(err: RouterError) -> Self {
+        match err {
+            RouterError::NoProviderRegistered => ProviderError::NoProviderRegistered,
+            RouterError::UnknownModel(model) => ProviderError::UnknownModel(model),
+            RouterError::Provider(err) => err,
+        }
+    }
+}
+
 /// 按 `Request.model` 自动派发的多 provider 路由层。
 #[derive(Default)]
 pub struct Router {
     /// 按注册顺序保存的 provider。
     providers: Vec<Box<dyn Provider>>,
-    /// 精确模型绑定：`模型 ID -> provider 名称`。
-    aliases: HashMap<ModelId, ProviderName>,
-    /// 前缀规则：`(前缀, provider 名称)`，按注册顺序保存。
-    prefixes: Vec<(String, ProviderName)>,
 }
 
 impl Router {
@@ -65,22 +62,15 @@ impl Router {
         self
     }
 
-    /// 把单个模型 ID 精确绑定到指定名称的 provider。
-    ///
-    /// 精确绑定优先于前缀规则与目录扫描，且不会匹配该 ID 的扩展形式。
-    pub fn alias(&mut self, model: impl Into<ModelId>, provider: &ProviderName) -> &mut Self {
-        self.aliases.insert(model.into(), provider.clone());
-        self
-    }
-
-    /// 添加一条前缀路由规则：所有以 `prefix` 开头的模型 ID 派发到该名称的
-    /// provider。
-    ///
-    /// 规则按 [`Provider::provider_name`] 引用 provider，派发时取最先注册的
-    /// 同名 provider；规则指向的 provider 未注册时被跳过。
-    pub fn route(&mut self, prefix: impl Into<String>, provider: &ProviderName) -> &mut Self {
-        self.prefixes.push((prefix.into(), provider.clone()));
-        self
+    /// 裸 id 在只注册了一家 vendor 时补上前缀；已有 vendor 则规范别名。
+    pub fn qualify(&self, model: &ModelId) -> ModelId {
+        if model.vendor().is_some() {
+            return model.qualify(model.vendor().expect("vendor present"));
+        }
+        if let Some(vendor) = self.single_vendor_slug() {
+            return model.qualify(&vendor);
+        }
+        model.clone()
     }
 
     /// 解析 `model` 对应的 provider。详见模块文档中的派发优先级。
@@ -89,41 +79,25 @@ impl Router {
             return Err(RouterError::NoProviderRegistered);
         }
 
-        // 1. 精确模型绑定。
-        if let Some(name) = self.aliases.get(model)
-            && let Some(provider) = self
-                .providers
-                .iter()
-                .find(|provider| provider.provider_name() == *name)
+        let model = self.qualify(model);
+
+        // slug vendor → 已注册 provider，再按协议挑选实现。
+        if let Some(vendor) = model.vendor()
+            && let Some(provider) = self.provider_for_vendor(vendor, &model)
         {
-            return Ok(provider.as_ref());
+            return Ok(provider);
         }
 
-        // 2. 前缀规则：最长匹配优先，等长时先注册的规则优先。
-        if let Some((_, (_, name))) = self
-            .prefixes
-            .iter()
-            .enumerate()
-            .filter(|(_, (prefix, _))| model.as_str().starts_with(prefix.as_str()))
-            .max_by_key(|(index, (prefix, _))| (prefix.len(), Reverse(*index)))
-            && let Some(provider) = self
-                .providers
-                .iter()
-                .find(|provider| provider.provider_name() == *name)
-        {
-            return Ok(provider.as_ref());
-        }
-
-        // 3. 静态目录扫描：按注册顺序取首个命中。
+        // 静态目录扫描：按注册顺序取首个命中。
         if let Some(provider) = self
             .providers
             .iter()
-            .find(|provider| provider.resolve_model(model).is_some())
+            .find(|provider| provider.resolve_model(&model).is_some())
         {
             return Ok(provider.as_ref());
         }
 
-        Err(RouterError::UnknownModel(model.clone()))
+        Err(RouterError::UnknownModel(model))
     }
 
     /// 非流式调用：解析 `req.model` 后转发给目标 provider。
@@ -143,11 +117,146 @@ impl Router {
         let provider = self.provider(&req.model)?;
         Ok(provider.stream(req).await?)
     }
+
+    fn single_vendor_slug(&self) -> Option<String> {
+        let mut slugs = self
+            .providers
+            .iter()
+            .map(|provider| provider.provider_name().slug().to_string())
+            .collect::<Vec<_>>();
+        slugs.sort();
+        slugs.dedup();
+        if slugs.len() == 1 { slugs.pop() } else { None }
+    }
+
+    fn provider_for_vendor(&self, vendor: &str, model: &ModelId) -> Option<&dyn Provider> {
+        let protocol = self.resolve_protocol(model);
+        let matches: Vec<&dyn Provider> = self
+            .providers
+            .iter()
+            .filter(|provider| provider.provider_name().matches_vendor(vendor))
+            .map(|provider| provider.as_ref())
+            .collect();
+        pick_protocol(matches, protocol)
+    }
+
+    fn resolve_protocol(&self, model: &ModelId) -> ProviderKind {
+        if let Some(variant) = model.variant() {
+            return match variant.to_ascii_lowercase().as_str() {
+                "responses" => ProviderKind::Responses,
+                "messages" => ProviderKind::Messages,
+                _ => ProviderKind::Completions,
+            };
+        }
+        if let Some(info) = self.lookup_catalog(model) {
+            return info.default_protocol();
+        }
+        ProviderKind::Completions
+    }
+
+    fn lookup_catalog(&self, model: &ModelId) -> Option<ModelInfo> {
+        for provider in &self.providers {
+            if let Some(info) = provider.resolve_model(model) {
+                return Some(info.clone());
+            }
+        }
+        catalog::all_models()
+            .into_iter()
+            .find(|info| {
+                info.id == model.wire_id()
+                    && info.provider.matches_vendor(model.vendor().unwrap_or(""))
+            })
+            .or_else(|| {
+                catalog::all_models()
+                    .into_iter()
+                    .find(|info| info.id == model.wire_id())
+            })
+    }
+}
+
+fn pick_protocol(matches: Vec<&dyn Provider>, protocol: ProviderKind) -> Option<&dyn Provider> {
+    if matches.is_empty() {
+        return None;
+    }
+    if let Some(exact) = matches
+        .iter()
+        .copied()
+        .find(|provider| provider.protocol() == Some(protocol))
+    {
+        return Some(exact);
+    }
+    if matches.len() == 1 {
+        return Some(matches[0]);
+    }
+    matches
+        .iter()
+        .copied()
+        .find(|provider| provider.protocol().is_none())
+        .or_else(|| matches.first().copied())
+}
+
+#[async_trait]
+impl Provider for Router {
+    async fn complete(&self, req: &Request) -> Result<Response, ProviderError> {
+        Ok(Router::complete(self, req).await?)
+    }
+
+    async fn stream(
+        &self,
+        req: &Request,
+    ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
+        Ok(Router::stream(self, req).await?)
+    }
+
+    fn known_models(&self) -> Vec<ModelInfo> {
+        let mut models = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for provider in &self.providers {
+            for mut model in provider.known_models() {
+                let slug = model.slug();
+                if seen.insert(slug.clone()) {
+                    model.id = slug;
+                    models.push(model);
+                }
+            }
+        }
+        models
+    }
+
+    fn resolve_model(&self, id: &ModelId) -> Option<&ModelInfo> {
+        let id = self.qualify(id);
+        self.providers
+            .iter()
+            .find_map(|provider| provider.resolve_model(&id))
+    }
+
+    fn provider_name(&self) -> ProviderName {
+        match self.single_vendor_slug() {
+            Some(slug) => ProviderName::from(slug.as_str()),
+            None => ProviderName::Custom("router".into()),
+        }
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let mut models = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for provider in &self.providers {
+            for mut model in provider.list_models().await? {
+                let slug = model.slug();
+                if seen.insert(slug.clone()) {
+                    model.id = slug;
+                    models.push(model);
+                }
+            }
+        }
+        Ok(models)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
@@ -164,6 +273,7 @@ mod tests {
             max_output_tokens: 100,
             capabilities: ModelCapabilities::default(),
             pricing: None,
+            protocols: Vec::new(),
         }
     }
 
@@ -173,6 +283,7 @@ mod tests {
         catalog: HashMap<ModelId, ModelInfo>,
         calls: Arc<Mutex<Vec<ProviderName>>>,
         fail: bool,
+        protocol: Option<ProviderKind>,
     }
 
     impl StubProvider {
@@ -186,7 +297,13 @@ mod tests {
                 catalog,
                 calls: Arc::new(Mutex::new(Vec::new())),
                 fail: false,
+                protocol: None,
             }
+        }
+
+        fn with_protocol(mut self, protocol: ProviderKind) -> Self {
+            self.protocol = Some(protocol);
+            self
         }
 
         fn failing(name: ProviderName, models: &[&str]) -> Self {
@@ -240,6 +357,10 @@ mod tests {
         fn provider_name(&self) -> ProviderName {
             self.name.clone()
         }
+
+        fn protocol(&self) -> Option<ProviderKind> {
+            self.protocol
+        }
     }
 
     fn request(model: &str) -> Request {
@@ -290,98 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn alias_overrides_catalog() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(
-                ProviderName::DeepSeek,
-                &["deepseek-v4-flash"],
-            )))
-            .register(Box::new(StubProvider::new(ProviderName::Zhipu, &[])))
-            .alias("deepseek-v4-flash", &ProviderName::Zhipu);
-
-        let provider = router
-            .provider(&ModelId::from("deepseek-v4-flash"))
-            .unwrap();
-        assert_eq!(provider.provider_name(), ProviderName::Zhipu);
-    }
-
-    #[test]
-    fn alias_is_exact_and_does_not_match_extensions() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(
-                ProviderName::DeepSeek,
-                &["m-1", "m-10"],
-            )))
-            .register(Box::new(StubProvider::new(ProviderName::Zhipu, &[])))
-            .alias("m-1", &ProviderName::Zhipu);
-
-        // 精确 ID 命中别名。
-        assert_eq!(
-            router
-                .provider(&ModelId::from("m-1"))
-                .unwrap()
-                .provider_name(),
-            ProviderName::Zhipu
-        );
-        // 扩展 ID 不受精确别名影响，退回目录扫描。
-        assert_eq!(
-            router
-                .provider(&ModelId::from("m-10"))
-                .unwrap()
-                .provider_name(),
-            ProviderName::DeepSeek
-        );
-    }
-
-    #[test]
-    fn prefix_rule_beats_catalog() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(
-                ProviderName::DeepSeek,
-                &["glm-5.2"],
-            )))
-            .register(Box::new(StubProvider::new(
-                ProviderName::Zhipu,
-                &["glm-5.2"],
-            )))
-            .route("glm-", &ProviderName::Zhipu);
-
-        let provider = router.provider(&ModelId::from("glm-5.2")).unwrap();
-        assert_eq!(provider.provider_name(), ProviderName::Zhipu);
-    }
-
-    #[test]
-    fn longest_prefix_rule_wins() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(ProviderName::DeepSeek, &[])))
-            .register(Box::new(StubProvider::new(ProviderName::Zhipu, &[])))
-            .route("deepseek-", &ProviderName::DeepSeek)
-            .route("deepseek-v4-", &ProviderName::Zhipu);
-
-        let provider = router
-            .provider(&ModelId::from("deepseek-v4-flash"))
-            .unwrap();
-        assert_eq!(provider.provider_name(), ProviderName::Zhipu);
-    }
-
-    #[test]
-    fn equal_length_prefix_uses_earliest_rule() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(ProviderName::DeepSeek, &[])))
-            .register(Box::new(StubProvider::new(ProviderName::Zhipu, &[])))
-            .route("ab-", &ProviderName::DeepSeek)
-            .route("ab-", &ProviderName::Zhipu);
-
-        let provider = router.provider(&ModelId::from("ab-x")).unwrap();
-        assert_eq!(provider.provider_name(), ProviderName::DeepSeek);
-    }
-
-    #[test]
     fn unknown_model_is_error() {
         let mut router = Router::new();
         router.register(Box::new(StubProvider::new(
@@ -389,23 +418,10 @@ mod tests {
             &["deepseek-v4-flash"],
         )));
 
-        let result = router.provider(&ModelId::from("unknown"));
+        let result = router.provider(&ModelId::from("xai/unknown"));
         assert!(matches!(
             result,
-            Err(RouterError::UnknownModel(ref model)) if model.as_str() == "unknown"
-        ));
-    }
-
-    #[test]
-    fn route_to_unregistered_provider_is_skipped() {
-        let mut router = Router::new();
-        router
-            .register(Box::new(StubProvider::new(ProviderName::DeepSeek, &[])))
-            .route("gpt-", &ProviderName::OpenAI);
-
-        assert!(matches!(
-            router.provider(&ModelId::from("gpt-4o")),
-            Err(RouterError::UnknownModel(_))
+            Err(RouterError::UnknownModel(ref model)) if model.as_str() == "xai/unknown"
         ));
     }
 
@@ -476,7 +492,71 @@ mod tests {
             &["deepseek-v4-flash"],
         )));
 
-        let result = router.stream(&request("unknown")).await;
+        let result = router.stream(&request("xai/grok-4.6")).await;
         assert!(matches!(result, Err(RouterError::UnknownModel(_))));
+    }
+
+    #[test]
+    fn slug_vendor_dispatches_and_variant_picks_protocol() {
+        let mut router = Router::new();
+        router
+            .register(Box::new(
+                StubProvider::new(ProviderName::DeepSeek, &["deepseek-v4-flash"])
+                    .with_protocol(ProviderKind::Completions),
+            ))
+            .register(Box::new(
+                StubProvider::new(ProviderName::DeepSeek, &["deepseek-v4-flash"])
+                    .with_protocol(ProviderKind::Responses),
+            ))
+            .register(Box::new(
+                StubProvider::new(ProviderName::Grok, &["grok-4.6"])
+                    .with_protocol(ProviderKind::Responses),
+            ));
+
+        assert_eq!(
+            router
+                .provider(&ModelId::from("deepseek/deepseek-v4-flash"))
+                .unwrap()
+                .protocol(),
+            Some(ProviderKind::Completions)
+        );
+        assert_eq!(
+            router
+                .provider(&ModelId::from("deepseek/deepseek-v4-flash:responses"))
+                .unwrap()
+                .protocol(),
+            Some(ProviderKind::Responses)
+        );
+        assert_eq!(
+            router
+                .provider(&ModelId::from("xai/grok-4.6"))
+                .unwrap()
+                .provider_name(),
+            ProviderName::Grok
+        );
+        assert_eq!(
+            router.qualify(&ModelId::from("grok/grok-4.6")).as_str(),
+            "xai/grok-4.6"
+        );
+    }
+
+    #[test]
+    fn single_vendor_qualifies_bare_id() {
+        let mut router = Router::new();
+        router.register(Box::new(StubProvider::new(
+            ProviderName::Moonshot,
+            &["kimi-k3"],
+        )));
+        assert_eq!(
+            router.qualify(&ModelId::from("kimi-k3")).as_str(),
+            "moonshot/kimi-k3"
+        );
+        assert_eq!(
+            router
+                .provider(&ModelId::from("kimi-k3"))
+                .unwrap()
+                .provider_name(),
+            ProviderName::Moonshot
+        );
     }
 }

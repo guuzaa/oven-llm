@@ -8,9 +8,10 @@ use thiserror::Error;
 use super::message::Message;
 use super::tool::{Tool, ToolChoice};
 
-/// 单个 provider 范围内的模型标识。
+/// 模型标识：完整 slug（`vendor/wire-id[:variant]`）或裸 wire id。
 ///
-/// 该类型保持与字符串完全相同的 serde 表示，但避免将模型选择与任意文本混用。
+/// serde 仍是普通字符串。发上游时只用 [`wire_id`](Self::wire_id)，不要把
+/// `vendor/` 前缀写进请求体。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ModelId(String);
@@ -20,8 +21,61 @@ impl ModelId {
         Self(value.into())
     }
 
+    /// 构造时写入的完整字符串（可能是 slug，也可能是裸 id）。
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// slug 里的 vendor 段（未规范化）。裸 id 返回 `None`。
+    pub fn vendor(&self) -> Option<&str> {
+        let (vendor, _, _) = split_model_id(&self.0);
+        vendor
+    }
+
+    /// 发给上游的模型名：去掉 vendor 前缀和 `:variant`。
+    pub fn wire_id(&self) -> &str {
+        let (_, wire, _) = split_model_id(&self.0);
+        wire
+    }
+
+    /// 协议变体，例如 `responses`。picker 不展示；手打 slug 时使用。
+    pub fn variant(&self) -> Option<&str> {
+        let (_, _, variant) = split_model_id(&self.0);
+        variant
+    }
+
+    /// 把裸 id 补成 `vendor/wire-id[:variant]`。已有 vendor 时只规范 vendor 段。
+    pub fn qualify(&self, vendor: &str) -> Self {
+        let vendor = canonical_vendor(vendor);
+        match self.variant() {
+            Some(variant) => Self(format!("{vendor}/{}:{variant}", self.wire_id())),
+            None => Self(format!("{vendor}/{}", self.wire_id())),
+        }
+    }
+}
+
+/// 已知厂商别名 → 规范 slug（小写）。未知值转成小写后原样返回。
+pub fn canonical_vendor(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "kimi" | "moonshot" => "moonshot".to_string(),
+        "glm" | "zhipu" => "zhipu".to_string(),
+        "grok" | "xai" => "xai".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn split_model_id(raw: &str) -> (Option<&str>, &str, Option<&str>) {
+    let (main, variant) = match raw.rsplit_once(':') {
+        Some((left, right)) if !left.is_empty() && !right.is_empty() && !right.contains('/') => {
+            (left, Some(right))
+        }
+        _ => (raw, None),
+    };
+    match main.split_once('/') {
+        Some((vendor, wire)) if !vendor.is_empty() && !wire.is_empty() => {
+            (Some(vendor), wire, variant)
+        }
+        _ => (None, main, variant),
     }
 }
 
@@ -375,6 +429,42 @@ impl Request {
 mod tests {
     use super::*;
     use crate::domain::message::{ContentBlock, Role};
+
+    #[test]
+    fn model_id_parses_slug_variant_and_bare() {
+        let slug = ModelId::from("deepseek/deepseek-v4-flash:responses");
+        assert_eq!(slug.vendor(), Some("deepseek"));
+        assert_eq!(slug.wire_id(), "deepseek-v4-flash");
+        assert_eq!(slug.variant(), Some("responses"));
+        assert_eq!(slug.as_str(), "deepseek/deepseek-v4-flash:responses");
+
+        let nested = ModelId::from("my-proxy/org/model");
+        assert_eq!(nested.vendor(), Some("my-proxy"));
+        assert_eq!(nested.wire_id(), "org/model");
+        assert_eq!(nested.variant(), None);
+
+        let bare = ModelId::from("deepseek-v4-flash");
+        assert_eq!(bare.vendor(), None);
+        assert_eq!(bare.wire_id(), "deepseek-v4-flash");
+        assert_eq!(bare.variant(), None);
+
+        let bare_variant = ModelId::from("deepseek-v4-flash:responses");
+        assert_eq!(bare_variant.vendor(), None);
+        assert_eq!(bare_variant.wire_id(), "deepseek-v4-flash");
+        assert_eq!(bare_variant.variant(), Some("responses"));
+    }
+
+    #[test]
+    fn model_id_qualify_and_canonical_vendor() {
+        let qualified = ModelId::from("deepseek-v4-flash:responses").qualify("kimi");
+        assert_eq!(qualified.as_str(), "moonshot/deepseek-v4-flash:responses");
+        assert_eq!(canonical_vendor("GROK"), "xai");
+        assert_eq!(canonical_vendor("glm"), "zhipu");
+        assert_eq!(canonical_vendor("My-Proxy"), "my-proxy");
+
+        let rewritten = ModelId::from("grok/grok-4.6").qualify("xai");
+        assert_eq!(rewritten.as_str(), "xai/grok-4.6");
+    }
 
     #[test]
     fn sampling_params_default_is_all_none() {

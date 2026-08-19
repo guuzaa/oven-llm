@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.4.0] - 2026-08-19
+### Added
+- `ModelId` slug parsing: `vendor()` / `wire_id()` / `variant()` / `qualify()`,
+  plus `canonical_vendor` (`kimi`→`moonshot`, `glm`→`zhipu`, `grok`→`xai`).
+  `Request.model` is now `vendor/wire-id[:variant]` or a bare wire id.
+- `Router::qualify` completes a bare id when only one vendor is registered, and
+  rewrites vendor aliases (`grok/...` → `xai/...`).
+- `Router` implements `Provider`, so an agent can hold one object for a single
+  vendor or a mix. `known_models` / `list_models` return slugs and de-duplicate
+  across registrations.
+- `ProviderBuilder::provider()`: omit `kind` and the builder registers every
+  protocol that vendor speaks (DeepSeek → Completions + Responses) as a
+  `Router`. `completions()` / `responses()` still force a single protocol.
+- `Provider::protocol`, `ProviderName::slug` / `matches_vendor`, and
+  `ModelInfo::{protocols, default_protocol, supports_protocol, slug}` so
+  protocol selection lives on the catalog instead of the request.
+- `ProviderError::NoProviderRegistered` and `ProviderError::UnknownModel`,
+  with `From<RouterError>` so `Router` can implement `Provider`.
+
+### Changed
+- Router dispatch is slug vendor first (`deepseek/...` → the DeepSeek
+  registration), then each provider's static catalog (first registration
+  wins). A `:responses` / `:messages` suffix, or the catalog default, picks
+  the protocol. No match → `RouterError::UnknownModel`; an explicit vendor
+  that is registered is forwarded even if the wire id is not in the catalog.
+- Completions and Responses encoders send `ModelId::wire_id()` on the wire,
+  not the full slug.
+- `ProviderName::Grok` serializes as `"xai"`; `"xai"` and `"grok"` both
+  deserialize back to `Grok`.
+- Setting `base_url` on `ProviderBuilder` no longer drops the preset catalog;
+  extra models append.
+- README rewritten around `ProviderBuilder` + `Router` + `vendor/wire-id`
+  slugs. `router_usage` now also registers a custom `my-proxy` gateway.
+
+### Removed
+- `Router::alias` and `Router::route`, along with the `aliases` / `prefixes`
+  fields. Dispatch is slug vendor + static catalog only.
+- `ModelRegistry`. Model lookup lives on each provider's static catalog
+  (`known_models` / `resolve_model`) and `Router`; callers that need a custom
+  list should pass `ModelInfo` through `ProviderBuilder`.
+
 ## [0.3.1] - 2026-08-16
 ### Added
 - `RequestBuilder::prompt(...)` appends a user text message, so simple

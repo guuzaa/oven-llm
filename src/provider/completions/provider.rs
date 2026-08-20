@@ -29,7 +29,9 @@ use crate::domain::{ModelId, Request, Response, StreamEvent};
 use crate::provider::http;
 use crate::provider::model::ModelInfo;
 use crate::provider::validate::validate_request;
-use crate::provider::{Provider, ProviderError};
+use crate::provider::{
+    DEEPSEEK_BASE_URL, MOONSHOT_BASE_URL, OPENAI_BASE_URL, Provider, ProviderError, ZHIPU_BASE_URL,
+};
 
 /// OpenAI Chat Completions 兼容协议的通用 `Provider` 实现。
 ///
@@ -43,15 +45,6 @@ pub struct CompletionsProvider {
     model_catalog: HashMap<ModelId, ModelInfo>,
     client: isahc::HttpClient,
 }
-
-/// OpenAI 官方 Chat Completions base_url。
-pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// DeepSeek Chat Completions base_url。
-pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-/// Moonshot（Kimi）Chat Completions base_url。
-pub(crate) const MOONSHOT_BASE_URL: &str = "https://api.moonshot.cn/v1";
-/// 智谱 GLM Chat Completions base_url。
-pub(crate) const ZHIPU_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
 
 impl CompletionsProvider {
     /// 通过 `ProviderName` 派发构造。已知的 OpenAI 兼容服务商会自动填入对应的

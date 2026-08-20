@@ -29,7 +29,7 @@ use crate::domain::{ModelId, Request, Response, StreamEvent};
 use crate::provider::http;
 use crate::provider::model::ModelInfo;
 use crate::provider::validate::validate_request;
-use crate::provider::{Provider, ProviderError};
+use crate::provider::{DEEPSEEK_BASE_URL, GROK_BASE_URL, OPENAI_BASE_URL, Provider, ProviderError};
 
 /// OpenAI Responses API 协议的通用 `Provider` 实现。
 ///
@@ -43,13 +43,6 @@ pub struct ResponsesProvider {
     model_catalog: HashMap<ModelId, ModelInfo>,
     client: isahc::HttpClient,
 }
-
-/// OpenAI 官方 Responses base_url。
-pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// DeepSeek Responses base_url。
-pub(crate) const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-/// xAI Grok Responses base_url。
-pub(crate) const GROK_BASE_URL: &str = "https://api.x.ai/v1";
 
 impl ResponsesProvider {
     /// 通过 `ProviderName` 派发构造。已知的 Responses API 服务商会自动填入

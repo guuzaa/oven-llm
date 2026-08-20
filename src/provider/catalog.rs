@@ -3,19 +3,6 @@
 use super::model::{ModelCapabilities, ModelInfo, Pricing};
 use crate::{ProviderKind, ProviderName};
 
-/// 已知厂商默认会说的协议。OpenAI / DeepSeek 两套都有；Grok 只有 Responses。
-pub fn preset_protocols(name: &ProviderName) -> Vec<ProviderKind> {
-    match name {
-        ProviderName::OpenAI | ProviderName::DeepSeek => {
-            vec![ProviderKind::Completions, ProviderKind::Responses]
-        }
-        ProviderName::Moonshot | ProviderName::Zhipu => vec![ProviderKind::Completions],
-        ProviderName::Grok => vec![ProviderKind::Responses],
-        ProviderName::Anthropic => Vec::new(),
-        ProviderName::Custom(_) => vec![ProviderKind::Completions],
-    }
-}
-
 pub fn all_models() -> Vec<ModelInfo> {
     let mut models = Vec::new();
     models.extend(deepseek_models());

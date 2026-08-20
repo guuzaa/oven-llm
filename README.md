@@ -24,8 +24,8 @@ cargo add oven-llm
 
 ## One vendor (`ProviderBuilder`)
 
-Do not pick a protocol. `ProviderBuilder::provider()` hangs every protocol that vendor speaks
-(Completions, Responses, or both) and returns `Box<dyn Provider>`.
+Do not pick a protocol. `ProviderBuilder::provider()` uses that vendor's default protocol
+and returns `Box<dyn Provider>`. Use `completions()` / `responses()` to force one.
 
 ```rust
 use oven_llm::{Provider, ProviderBuilder, ProviderName, Request};

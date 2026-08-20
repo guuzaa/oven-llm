@@ -25,6 +25,12 @@ use std::fmt;
 
 use crate::domain::{ModelId, Request, Response, StreamEvent};
 
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+const MOONSHOT_BASE_URL: &str = "https://api.moonshot.cn/v1";
+const ZHIPU_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+const GROK_BASE_URL: &str = "https://api.x.ai/v1";
+
 /// 统一的 LLM 调用抽象：harness/应用代码只依赖该 trait 与 domain 类型，
 /// 永远不接触任何 wire format 类型。
 #[async_trait]
@@ -83,6 +89,28 @@ impl ProviderName {
 
     pub fn matches_vendor(&self, vendor: &str) -> bool {
         crate::canonical_vendor(vendor) == self.slug()
+    }
+
+    pub fn base_url(&self) -> Option<&'static str> {
+        match self {
+            ProviderName::OpenAI => Some(OPENAI_BASE_URL),
+            ProviderName::DeepSeek => Some(DEEPSEEK_BASE_URL),
+            ProviderName::Moonshot => Some(MOONSHOT_BASE_URL),
+            ProviderName::Zhipu => Some(ZHIPU_BASE_URL),
+            ProviderName::Grok => Some(GROK_BASE_URL),
+            _ => None,
+        }
+    }
+
+    pub fn default_protocol(&self) -> Option<ProviderKind> {
+        match self {
+            ProviderName::DeepSeek
+            | ProviderName::Moonshot
+            | ProviderName::Zhipu
+            | ProviderName::Custom(_) => Some(ProviderKind::Completions),
+            ProviderName::OpenAI | ProviderName::Grok => Some(ProviderKind::Responses),
+            ProviderName::Anthropic => None,
+        }
     }
 }
 
@@ -266,6 +294,35 @@ mod tests {
             serde_json::from_str::<ProviderName>(r#""some-provider""#).unwrap(),
             ProviderName::Custom("some-provider".into())
         );
+    }
+
+    #[test]
+    fn each_vendor_has_one_preset_protocol() {
+        assert_eq!(
+            ProviderName::OpenAI.default_protocol(),
+            Some(ProviderKind::Responses)
+        );
+        assert_eq!(
+            ProviderName::DeepSeek.default_protocol(),
+            Some(ProviderKind::Completions)
+        );
+        assert_eq!(
+            ProviderName::Moonshot.default_protocol(),
+            Some(ProviderKind::Completions)
+        );
+        assert_eq!(
+            ProviderName::Zhipu.default_protocol(),
+            Some(ProviderKind::Completions)
+        );
+        assert_eq!(
+            ProviderName::Grok.default_protocol(),
+            Some(ProviderKind::Responses)
+        );
+        assert_eq!(
+            ProviderName::Custom("gw".into()).default_protocol(),
+            Some(ProviderKind::Completions)
+        );
+        assert!(ProviderName::Anthropic.default_protocol().is_none());
     }
 
     #[test]

@@ -57,8 +57,28 @@ impl Router {
     ///
     /// 注册顺序决定目录扫描的归属：同一模型被多个 provider 的目录命中时，
     /// 先注册者胜出；同名 provider 重复注册时，名称查找取最先注册的那个。
+    ///
+    /// 同一厂商的多套协议（Completions + Responses）应多次 [`register`]。
+    /// 更新某厂商凭证、避免重复挂上同一 vendor 时用 [`upsert`](Self::upsert)。
     pub fn register(&mut self, provider: Box<dyn Provider>) -> &mut Self {
         self.providers.push(provider);
+        self
+    }
+
+    /// 按 vendor slug 登记：已有同 slug 则替换，否则追加。
+    ///
+    /// Router 本身不重建，只换掉该厂商的那一条。
+    pub fn upsert(&mut self, provider: Box<dyn Provider>) -> &mut Self {
+        let slug = provider.provider_name().slug().to_string();
+        if let Some(index) = self
+            .providers
+            .iter()
+            .position(|p| p.provider_name().slug() == slug)
+        {
+            self.providers[index] = provider;
+        } else {
+            self.providers.push(provider);
+        }
         self
     }
 
@@ -558,5 +578,32 @@ mod tests {
                 .provider_name(),
             ProviderName::Moonshot
         );
+    }
+
+    #[test]
+    fn upsert_replaces_same_vendor_keeps_others() {
+        let mut router = Router::new();
+        router
+            .register(Box::new(StubProvider::new(
+                ProviderName::DeepSeek,
+                &["old-model"],
+            )))
+            .register(Box::new(StubProvider::new(
+                ProviderName::Zhipu,
+                &["glm-5.2"],
+            )));
+        router.upsert(Box::new(StubProvider::new(
+            ProviderName::DeepSeek,
+            &["new-model"],
+        )));
+
+        let ids: Vec<_> = router
+            .known_models()
+            .into_iter()
+            .map(|model| model.id)
+            .collect();
+        assert!(ids.iter().any(|id| id.contains("new-model")));
+        assert!(!ids.iter().any(|id| id.contains("old-model")));
+        assert!(ids.iter().any(|id| id.contains("glm-5.2")));
     }
 }

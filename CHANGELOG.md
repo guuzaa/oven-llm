@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1] - 2026-08-20
+### Added
+- `Router::upsert`: replace an existing registration with the same vendor slug,
+  or append. Same-vendor multi-protocol still uses `register` (append).
+
+### Changed
+- `ProviderBuilder::provider()`: omit `kind` and the builder uses that vendor's
+  default protocol. `completions()` / `responses()` still force a single protocol.
+
 ## [0.4.0] - 2026-08-19
 ### Added
 - `ModelId` slug parsing: `vendor()` / `wire_id()` / `variant()` / `qualify()`,

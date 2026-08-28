@@ -160,9 +160,9 @@ pub struct SamplingParams {
 impl Default for SamplingParams {
     fn default() -> Self {
         Self {
-            temperature: Some(0.7),
+            temperature: Some(1.0),
             top_p: None,
-            max_tokens: Some(2048),
+            max_tokens: None,
             stop: None,
         }
     }
@@ -469,9 +469,9 @@ mod tests {
     #[test]
     fn sampling_params_default_is_all_none() {
         let params = SamplingParams::default();
-        assert_eq!(params.temperature, Some(0.7));
+        assert_eq!(params.temperature, Some(1.0));
         assert_eq!(params.top_p, None);
-        assert_eq!(params.max_tokens, Some(2048));
+        assert_eq!(params.max_tokens, None);
         assert_eq!(params.stop, None);
     }
 

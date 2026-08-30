@@ -1,7 +1,7 @@
 //! 一个带工具调用的流式 coding agent。
 //!
 //! 运行方式：
-//! `DEEPSEEK_API_KEY=sk-xxx cargo run --example agent_loop -- "为这个项目补充 README"`
+//! `ZHIPU_API_KEY=sk-xxx cargo run --example agent_loop -- "summarize Cargo.toml"`
 //!
 //! 默认将当前目录视为工作区；可通过 `CODING_AGENT_ROOT` 限制 agent 可读写的根目录。
 
@@ -28,9 +28,9 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 async fn main() -> ExampleResult<()> {
     let workspace_root = coding_workspace_root()?;
     let task = coding_task();
-    let api_key = env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
+    let api_key = env::var("ZHIPU_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
     let provider = ProviderBuilder::completions()
-        .provider_name(ProviderName::DeepSeek)
+        .provider_name(ProviderName::Zhipu)
         .api_key(api_key)
         .build()?;
 
@@ -38,17 +38,12 @@ async fn main() -> ExampleResult<()> {
     println!("task: {task}");
 
     let mut request = Request::builder()
-        .model("deepseek-v4-flash")
-        .system(format!(
-            "You are a careful coding agent. Your workspace root is {}. \
-             Use read_file before changing a file. Use write_file only for files inside that root. \
-             Make the requested change, then give a concise final summary.",
-            workspace_root.display()
-        ))
+        .model("glm-5.3-flash")
+        .system(coding_agent_system_prompt(&workspace_root))
         .prompt(task)
         .tools(coding_tools())
-        .temperature(0.1)
-        .thinking(oven_llm::ThinkingMode::Enabled)
+        .temperature(1.0)
+        .thinking(oven_llm::Thinking::preserved())
         .build()
         .expect("model is set");
 
@@ -56,7 +51,7 @@ async fn main() -> ExampleResult<()> {
         let response = collect_streamed_response(provider.as_ref(), &request).await?;
         let requests_tools =
             response.stop_reason == Some(StopReason::ToolUse) && response.has_tool_use();
-        println!("usage: {:?}", response.usage);
+        print_usage(response.usage.as_ref());
 
         // 关键顺序：先提交完整的 assistant 消息（含 tool_use），再执行工具并追加结果。
         // OpenAI 兼容接口要求 role=tool 紧跟在发起该调用的 assistant 消息之后。
@@ -114,6 +109,65 @@ async fn collect_streamed_response<P: Provider + ?Sized>(
     println!();
 
     Ok(collector.finish()?)
+}
+
+fn print_usage(usage: Option<&oven_llm::Usage>) {
+    match usage {
+        None => println!("usage: None"),
+        Some(usage) => {
+            let hit = if usage.input_tokens == 0 {
+                0.0
+            } else {
+                100.0 * f64::from(usage.cache_read_tokens) / f64::from(usage.input_tokens)
+            };
+            println!(
+                "usage: input={} output={} cache_read={} ({hit:.1}%) reasoning={}",
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.reasoning_tokens
+            );
+        }
+    }
+}
+
+fn coding_agent_system_prompt(workspace_root: &Path) -> String {
+    format!(
+        "You are a careful coding agent working in a local workspace.\n\
+         \n\
+         Workspace root (absolute, already canonicalized):\n\
+         {}\n\
+         \n\
+         Tools:\n\
+         - read_file: read a UTF-8 text file. Path is relative to the workspace root.\n\
+         - write_file: create or replace a UTF-8 text file. Path is relative to the workspace root.\n\
+         \n\
+         Path rules:\n\
+         - Only ordinary relative paths (no `.`, `..`, or absolute paths).\n\
+         - Never read or write outside the workspace root.\n\
+         - If a path is unclear, prefer listing what you know from files you have already read \
+           instead of guessing.\n\
+         \n\
+         Workflow:\n\
+         1. Understand the user's request before editing anything.\n\
+         2. Read a file before you change it. Do not invent file contents from memory.\n\
+         3. Prefer the smallest change that satisfies the request. Do not refactor unrelated code.\n\
+         4. After writes, briefly say which files changed and why.\n\
+         5. If you only need to inspect or summarize, do not write files.\n\
+         6. When the task is done, give a concise final summary and stop calling tools.\n\
+         \n\
+         Style:\n\
+         - Match the existing code's naming, comments, and formatting.\n\
+         - Do not add markdown files, tests, or extra dependencies unless the user asked for them.\n\
+         - Do not print secrets, API keys, or credential files if you happen to read them.\n\
+         - If a tool returns an error, explain it and try a different path or approach.\n\
+         \n\
+         This system prompt is intentionally detailed so the request prefix is long enough \
+         for provider implicit context cache (commonly ≥ 512 tokens) to write on the first \
+         tool-loop turn and hit on later turns. Keep this text stable across turns; do not \
+         ask the user to repeat these rules.",
+        workspace_root.display()
+    )
 }
 
 fn coding_tools() -> Vec<Tool> {
@@ -224,7 +278,8 @@ fn coding_workspace_root() -> ExampleResult<PathBuf> {
 fn coding_task() -> String {
     let task = env::args().skip(1).collect::<Vec<_>>().join(" ");
     if task.is_empty() {
-        "Inspect this Rust project and suggest one small, useful improvement. Do not write files unless it is necessary to complete the improvement.".to_string()
+        "Inspect this Rust project and suggest one small, useful improvement. Do not write files."
+            .to_string()
     } else {
         task
     }

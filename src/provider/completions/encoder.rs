@@ -77,7 +77,8 @@ pub(crate) fn encode_request(
     };
 
     let thinking = req.thinking.map(|t| WireThinking {
-        mode: t.to_string(),
+        r#type: t.mode.to_string(),
+        clear_thinking: t.clear_thinking,
     });
 
     let reasoning_effort = req.reasoning_effort.map(|e| e.to_string());
@@ -340,7 +341,7 @@ fn encode_tool_choice(choice: &ToolChoice) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{ReasoningEffort, SamplingParams, ThinkingMode};
+    use crate::domain::request::{ReasoningEffort, SamplingParams, Thinking};
 
     // --- encode_request: system field (Requirement 3.1) ---
 
@@ -803,23 +804,27 @@ mod tests {
     #[test]
     fn encode_request_thinking_enabled() {
         let req = Request {
-            thinking: Some(ThinkingMode::Enabled),
+            thinking: Some(Thinking::enabled()),
             ..Default::default()
         };
         let wire = encode_request(&req, false).unwrap();
         let thinking = wire.thinking.unwrap();
-        assert_eq!(thinking.mode, "enabled");
+        assert_eq!(thinking.r#type, "enabled");
+        assert_eq!(thinking.clear_thinking, None);
+        let json = serde_json::to_value(&thinking).unwrap();
+        assert_eq!(json, serde_json::json!({"type": "enabled"}));
     }
 
     #[test]
     fn encode_request_thinking_disabled() {
         let req = Request {
-            thinking: Some(ThinkingMode::Disabled),
+            thinking: Some(Thinking::disabled()),
             ..Default::default()
         };
         let wire = encode_request(&req, false).unwrap();
         let thinking = wire.thinking.unwrap();
-        assert_eq!(thinking.mode, "disabled");
+        assert_eq!(thinking.r#type, "disabled");
+        assert_eq!(thinking.clear_thinking, None);
     }
 
     #[test]
@@ -866,12 +871,46 @@ mod tests {
     #[test]
     fn encode_request_thinking_and_reasoning_effort_together() {
         let req = Request {
-            thinking: Some(ThinkingMode::Enabled),
+            thinking: Some(Thinking::enabled()),
             reasoning_effort: Some(ReasoningEffort::Medium),
             ..Default::default()
         };
         let wire = encode_request(&req, false).unwrap();
-        assert_eq!(wire.thinking.unwrap().mode, "enabled");
+        assert_eq!(wire.thinking.unwrap().r#type, "enabled");
         assert_eq!(wire.reasoning_effort, Some("medium".to_string()));
+    }
+
+    #[test]
+    fn encode_request_thinking_preserved_sets_clear_thinking_false() {
+        let req = Request {
+            thinking: Some(Thinking::preserved()),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        let thinking = wire.thinking.unwrap();
+        assert_eq!(thinking.r#type, "enabled");
+        assert_eq!(thinking.clear_thinking, Some(false));
+        let json = serde_json::to_value(&thinking).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"type": "enabled", "clear_thinking": false})
+        );
+    }
+
+    #[test]
+    fn encode_request_thinking_explicit_clear_thinking_true() {
+        let req = Request {
+            thinking: Some(Thinking::enabled().clear_thinking(true)),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        let thinking = wire.thinking.unwrap();
+        assert_eq!(thinking.r#type, "enabled");
+        assert_eq!(thinking.clear_thinking, Some(true));
+        let json = serde_json::to_value(&thinking).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"type": "enabled", "clear_thinking": true})
+        );
     }
 }

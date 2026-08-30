@@ -229,7 +229,12 @@ impl StreamDecoder {
 
         if self.phase == StreamPhase::AwaitingDone {
             if chunk.choices.is_empty() {
-                // 仅携带 usage 的收尾 chunk，容忍并忽略。
+                if let Some(usage) = chunk.usage {
+                    return Ok(vec![StreamEvent::MessageDelta {
+                        stop_reason: None,
+                        usage: Some(decode_usage(usage)),
+                    }]);
+                }
                 return Ok(Vec::new());
             }
             return Err(CompletionsDecodeError::DataAfterFinish);
@@ -1088,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn awaiting_done_with_empty_choices_usage_only_chunk_is_ok() {
+    fn awaiting_done_with_empty_choices_usage_only_chunk_emits_message_delta() {
         let mut decoder = StreamDecoder::new();
         decoder
             .decode_chunk(stream_chunk(
@@ -1101,13 +1106,48 @@ mod tests {
             .decode_chunk(stream_chunk(
                 vec![],
                 Some(WireUsage {
-                    prompt_tokens: 1,
-                    completion_tokens: 2,
-                    total_tokens: 3,
+                    prompt_tokens: 1870,
+                    completion_tokens: 419,
+                    total_tokens: 2289,
+                    prompt_tokens_details: Some(WireTokenDetails {
+                        cached_tokens: Some(1600),
+                        reasoning_tokens: None,
+                    }),
+                    completion_tokens_details: Some(WireTokenDetails {
+                        cached_tokens: None,
+                        reasoning_tokens: Some(31),
+                    }),
                     ..Default::default()
                 }),
             ))
             .unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::MessageDelta {
+                stop_reason,
+                usage: Some(usage),
+            } => {
+                assert_eq!(*stop_reason, None);
+                assert_eq!(usage.input_tokens, 1870);
+                assert_eq!(usage.output_tokens, 419);
+                assert_eq!(usage.cache_read_tokens, 1600);
+                assert_eq!(usage.reasoning_tokens, 31);
+            }
+            other => panic!("expected usage MessageDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn awaiting_done_with_empty_choices_without_usage_is_ok() {
+        let mut decoder = StreamDecoder::new();
+        decoder
+            .decode_chunk(stream_chunk(
+                vec![text_delta_choice("hi", Some("stop"))],
+                None,
+            ))
+            .unwrap();
+
+        let events = decoder.decode_chunk(stream_chunk(vec![], None)).unwrap();
         assert!(events.is_empty());
     }
 

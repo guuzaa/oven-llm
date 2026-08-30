@@ -54,7 +54,7 @@ pub(crate) fn encode_request(req: &Request, stream: bool) -> Result<ResponseRequ
         input: if input.is_empty() { None } else { Some(input) },
         tools,
         tool_choice: encode_tool_choice(&req.tool_choice),
-        reasoning: encode_reasoning(req.reasoning_effort, req.thinking),
+        reasoning: encode_reasoning(req.reasoning_effort, req.thinking.map(|t| t.mode)),
         temperature: req.sampling.temperature,
         top_p: req.sampling.top_p,
         max_output_tokens: req.sampling.max_tokens,
@@ -350,7 +350,7 @@ fn encode_reasoning(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::SamplingParams;
+    use crate::domain::request::{SamplingParams, Thinking};
 
     // --- 纯文本请求 ---
 
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn thinking_disabled_maps_to_reasoning_none() {
         let req = Request {
-            thinking: Some(ThinkingMode::Disabled),
+            thinking: Some(Thinking::disabled()),
             ..Default::default()
         };
         let wire = encode_request(&req, false).unwrap();
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn reasoning_effort_wins_over_thinking_disabled() {
         let req = Request {
-            thinking: Some(ThinkingMode::Disabled),
+            thinking: Some(Thinking::disabled()),
             reasoning_effort: Some(ReasoningEffort::High),
             ..Default::default()
         };
@@ -768,7 +768,17 @@ mod tests {
     #[test]
     fn thinking_enabled_without_effort_omits_reasoning() {
         let req = Request {
-            thinking: Some(ThinkingMode::Enabled),
+            thinking: Some(Thinking::enabled()),
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        assert!(wire.reasoning.is_none());
+    }
+
+    #[test]
+    fn thinking_preserved_is_ignored_by_responses_wire() {
+        let req = Request {
+            thinking: Some(Thinking::preserved()),
             ..Default::default()
         };
         let wire = encode_request(&req, false).unwrap();

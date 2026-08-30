@@ -110,9 +110,10 @@ impl fmt::Display for ModelId {
 }
 
 /// 思维链开关：启用或禁用模型的 thinking/reasoning 输出。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ThinkingMode {
     #[serde(rename = "enabled")]
+    #[default]
     Enabled,
     #[serde(rename = "disabled")]
     Disabled,
@@ -124,6 +125,61 @@ impl fmt::Display for ThinkingMode {
             ThinkingMode::Enabled => "enabled",
             ThinkingMode::Disabled => "disabled",
         })
+    }
+}
+
+/// 思维链配置：当前轮开关 + 是否清除历史思考。
+///
+/// `mode` 控制本轮是否产出思维链；`clear_thinking` 控制历史轮的
+/// `reasoning_content` 是否被丢掉。两字段正交：后者不改变本轮是否思考。
+///
+/// `clear_thinking` 为 `None` 时不出现在 Completions wire 上，沿用上游默认
+/// （智谱标准 API 为 `true`）。`Some(false)` 即 Preserved Thinking。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct Thinking {
+    pub mode: ThinkingMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clear_thinking: Option<bool>,
+}
+
+impl Thinking {
+    /// 开启思维链，不显式设置 `clear_thinking`。
+    pub fn enabled() -> Self {
+        Self {
+            mode: ThinkingMode::Enabled,
+            clear_thinking: None,
+        }
+    }
+
+    /// 关闭思维链，不显式设置 `clear_thinking`。
+    pub fn disabled() -> Self {
+        Self {
+            mode: ThinkingMode::Disabled,
+            clear_thinking: None,
+        }
+    }
+
+    /// 智谱 Preserved Thinking：开启思考且保留历史思维链。
+    pub fn preserved() -> Self {
+        Self {
+            mode: ThinkingMode::Enabled,
+            clear_thinking: Some(false),
+        }
+    }
+
+    /// 设置是否清除历史思维链（`false` 为 Preserved Thinking）。
+    pub fn clear_thinking(mut self, clear: bool) -> Self {
+        self.clear_thinking = Some(clear);
+        self
+    }
+}
+
+impl From<ThinkingMode> for Thinking {
+    fn from(mode: ThinkingMode) -> Self {
+        Self {
+            mode,
+            clear_thinking: None,
+        }
     }
 }
 
@@ -177,7 +233,7 @@ pub struct Request {
     pub tools: Vec<Tool>,
     pub tool_choice: ToolChoice,
     pub sampling: SamplingParams,
-    pub thinking: Option<ThinkingMode>,
+    pub thinking: Option<Thinking>,
     pub reasoning_effort: Option<ReasoningEffort>,
     /// Provider 私有参数直通（跳过标准 Serialize，由 transport 层 merge 进
     /// wire JSON body，键名需与 provider wire format 一致，不应与标准字段重名）。
@@ -252,9 +308,9 @@ impl Request {
         self
     }
 
-    /// 设置思维链模式。
-    pub fn thinking(&mut self, mode: ThinkingMode) -> &mut Self {
-        self.thinking = Some(mode);
+    /// 设置思维链配置。接受 [`Thinking`] 或 [`ThinkingMode`]。
+    pub fn thinking(&mut self, thinking: impl Into<Thinking>) -> &mut Self {
+        self.thinking = Some(thinking.into());
         self
     }
 
@@ -309,7 +365,7 @@ pub struct RequestBuilder {
     tools: Vec<Tool>,
     tool_choice: ToolChoice,
     sampling: SamplingParams,
-    thinking: Option<ThinkingMode>,
+    thinking: Option<Thinking>,
     reasoning_effort: Option<ReasoningEffort>,
     provider_options: serde_json::Map<String, serde_json::Value>,
 }
@@ -380,12 +436,13 @@ impl RequestBuilder {
         self
     }
 
-    /// 设置思维链模式。
-    pub fn thinking(mut self, mode: ThinkingMode) -> Self {
-        self.thinking = Some(mode);
-        if mode == ThinkingMode::Enabled && self.reasoning_effort.is_none() {
-            self.reasoning_effort = Some(ReasoningEffort::Medium);
+    /// 设置思维链配置。接受 [`Thinking`] 或 [`ThinkingMode`]。
+    pub fn thinking(mut self, thinking: impl Into<Thinking>) -> Self {
+        let thinking = thinking.into();
+        if thinking.mode == ThinkingMode::Enabled && self.reasoning_effort.is_none() {
+            self.reasoning_effort = Some(ReasoningEffort::High);
         }
+        self.thinking = Some(thinking);
         self
     }
 
@@ -546,7 +603,7 @@ mod tests {
                 temperature: Some(0.5),
                 ..Default::default()
             },
-            thinking: Some(ThinkingMode::Enabled),
+            thinking: Some(Thinking::enabled()),
             reasoning_effort: Some(ReasoningEffort::High),
             provider_options: serde_json::Map::new(),
         };
@@ -556,7 +613,7 @@ mod tests {
         assert_eq!(decoded.system, req.system);
         assert_eq!(decoded.tool_choice, req.tool_choice);
         assert_eq!(decoded.sampling, req.sampling);
-        assert_eq!(decoded.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(decoded.thinking, Some(Thinking::enabled()));
         assert_eq!(decoded.reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(decoded.messages[0].role, Role::User);
         assert!(decoded.provider_options.is_empty());
@@ -644,7 +701,7 @@ mod tests {
         assert_eq!(req.sampling.top_p, Some(0.9));
         assert_eq!(req.sampling.max_tokens, Some(1024));
         assert_eq!(req.sampling.stop.as_ref().unwrap(), &["STOP".to_string()]);
-        assert_eq!(req.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(req.thinking, Some(Thinking::enabled()));
         assert_eq!(req.reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(req.provider_options["top_k"], 40);
     }
@@ -658,14 +715,14 @@ mod tests {
     }
 
     #[test]
-    fn builder_defaults_reasoning_effort_to_medium() {
+    fn builder_defaults_reasoning_effort_to_high() {
         let req = Request::builder()
             .model("gpt-4")
             .thinking(ThinkingMode::Enabled)
             .build()
             .unwrap();
 
-        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::Medium));
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::High));
     }
 
     #[test]
@@ -687,7 +744,7 @@ mod tests {
         assert_eq!(req.sampling.top_p, Some(0.9));
         assert_eq!(req.sampling.max_tokens, Some(1024));
         assert_eq!(req.sampling.stop.as_ref().unwrap(), &["STOP".to_string()]);
-        assert_eq!(req.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(req.thinking, Some(Thinking::enabled()));
         assert_eq!(req.reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(req.tool_choice, ToolChoice::Any);
     }
@@ -796,6 +853,47 @@ mod tests {
         assert_eq!(req.messages[1].role, Role::Assistant);
         assert_eq!(req.messages[2].role, Role::User);
         assert_eq!(req.tools.len(), 1);
-        assert_eq!(req.thinking, Some(ThinkingMode::Enabled));
+        assert_eq!(req.thinking, Some(Thinking::enabled()));
+    }
+
+    #[test]
+    fn thinking_from_mode_omits_clear_thinking() {
+        let thinking = Thinking::from(ThinkingMode::Enabled);
+        assert_eq!(thinking.mode, ThinkingMode::Enabled);
+        assert_eq!(thinking.clear_thinking, None);
+        assert_eq!(thinking, Thinking::enabled());
+    }
+
+    #[test]
+    fn thinking_preserved_sets_clear_thinking_false() {
+        let thinking = Thinking::preserved();
+        assert_eq!(thinking.mode, ThinkingMode::Enabled);
+        assert_eq!(thinking.clear_thinking, Some(false));
+        assert_eq!(thinking, Thinking::enabled().clear_thinking(false));
+    }
+
+    #[test]
+    fn builder_accepts_thinking_struct() {
+        let req = Request::builder()
+            .model("gpt-4")
+            .thinking(Thinking::preserved())
+            .build()
+            .unwrap();
+
+        assert_eq!(req.thinking, Some(Thinking::preserved()));
+        assert_eq!(req.reasoning_effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn thinking_serializes_mode_and_optional_clear_thinking() {
+        let json = serde_json::to_value(Thinking::enabled()).unwrap();
+        assert_eq!(json, serde_json::json!({"mode": "enabled"}));
+        assert!(json.get("clear_thinking").is_none());
+
+        let json = serde_json::to_value(Thinking::preserved()).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"mode": "enabled", "clear_thinking": false})
+        );
     }
 }

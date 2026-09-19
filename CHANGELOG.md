@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.2] - 2026-09-19
+### Added
+- `ContentBlock::ToolUse.raw_arguments`: the `arguments` JSON text exactly as it
+  arrived on the wire. Both decoders (streaming via `StreamCollector`, and
+  non-streaming) fill it in, and both encoders replay it verbatim.
+  `ContentBlock::tool_use(...)` builds a block without it, and
+  `ContentBlock::tool_arguments(input, raw)` returns the text to replay
+  (raw when present, otherwise the compact `input` serialization).
+
+### Changed
+- `ContentBlock::ToolUse` gained a field. Existing struct literals need
+  `raw_arguments: None` (or `ContentBlock::tool_use(...)`) and destructuring
+  patterns need `..`.
+
+### Fixed
+- Replaying an assistant turn no longer re-serializes `tool_calls[].arguments`
+  from the parsed `Value` (compact separators, keys sorted alphabetically).
+  Providers that cache on disk — DeepSeek in particular — only serve a prefix
+  that *fully* matches a stored cache unit, and one of those units ends at the
+  model output; a re-serialized tool call (`{"a": "b"}` → `{"a":"b"}`, keys
+  reordered) diverges from the generated tokens there, so the whole assistant
+  turn — reasoning included — fell out of the cache on every later request.
+  Measured against `deepseek-flash`: byte-faithful replay hit 384 tokens (6
+  blocks) deeper on the immediately following request, and the hit rate rose
+  from 65.5% to 78.6% there.
+
 ## [0.4.1] - 2026-08-20
 ### Added
 - `Router::upsert`: replace an existing registration with the same vendor slug,

@@ -12,5 +12,5 @@ pub use request::{
     ThinkingMode, canonical_vendor,
 };
 pub use response::{Response, StopReason, Usage};
-pub use stream::{Delta, StreamCollector, StreamCollectorError, StreamEvent};
+pub use stream::{Delta, StreamCollector, StreamCollectorError, StreamEvent, StreamPhase};
 pub use tool::{Tool, ToolChoice};

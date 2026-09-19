@@ -14,7 +14,7 @@ use super::types::{
 };
 use crate::domain::message::{ContentBlock, Role};
 use crate::domain::response::{Response, StopReason, Usage};
-use crate::domain::stream::{Delta, StreamEvent};
+use crate::domain::stream::{Delta, StreamEvent, StreamPhase};
 
 /// `decode_response`（及流式 `StreamDecoder`）的解码失败原因。
 #[derive(Debug, Error)]
@@ -169,23 +169,6 @@ pub(crate) fn decode_response(wire: ResponseObject) -> Result<Response, DecodeEr
 // ---------------------------------------------------------------------------
 // 流式 StreamDecoder
 // ---------------------------------------------------------------------------
-
-/// `StreamDecoder` 的生命周期阶段。
-///
-/// - `Initial`：尚未收到 `response.created`，下一个事件会触发 `MessageStart`。
-/// - `Streaming`：已发出 `MessageStart`，正在接收内容事件。
-/// - `AwaitingDone`：已收到终止事件（`response.completed` /
-///   `response.incomplete`）并发出 `MessageDelta`，等待上层调用 `finish()`
-///   产出 `MessageStop`。
-/// - `Stopped`：已发出 `MessageStop`，流已结束。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum StreamPhase {
-    #[default]
-    Initial,
-    Streaming,
-    AwaitingDone,
-    Stopped,
-}
 
 /// 将 OpenAI Responses API 流式事件升维为 Anthropic 风格的块事件序列
 /// （`ContentBlockStart → ContentBlockDelta* → ContentBlockStop`）。

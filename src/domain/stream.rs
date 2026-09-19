@@ -12,6 +12,23 @@ use thiserror::Error;
 use super::message::{ContentBlock, Role};
 use super::response::{Response, StopReason, Usage};
 
+/// `StreamDecoder` 的生命周期阶段。
+///
+/// - `Initial`：尚未收到 `response.created`，下一个事件会触发 `MessageStart`。
+/// - `Streaming`：已发出 `MessageStart`，正在接收内容事件。
+/// - `AwaitingDone`：已收到终止事件（`response.completed` /
+///   `response.incomplete`）并发出 `MessageDelta`，等待上层调用 `finish()`
+///   产出 `MessageStop`。
+/// - `Stopped`：已发出 `MessageStop`，流已结束。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StreamPhase {
+    #[default]
+    Initial,
+    Streaming,
+    AwaitingDone,
+    Stopped,
+}
+
 /// 内容块的增量更新片段。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]

@@ -50,9 +50,7 @@ pub(crate) enum StopValue {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct WireThinking {
     #[serde(rename = "type")]
-    pub r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clear_thinking: Option<bool>,
+    pub mode: String,
 }
 
 /// 流式请求下用于要求服务端在最后一个 chunk 携带 `usage` 字段。
@@ -317,29 +315,6 @@ mod tests {
         assert!(json.get("reasoning_effort").is_none());
         assert!(json.get("stream_options").is_none());
         assert_eq!(json["stream"], false);
-    }
-
-    #[test]
-    fn wire_thinking_omits_clear_thinking_when_none() {
-        let thinking = WireThinking {
-            r#type: "enabled".to_string(),
-            clear_thinking: None,
-        };
-        let json = serde_json::to_value(&thinking).unwrap();
-        assert_eq!(json, serde_json::json!({"type": "enabled"}));
-    }
-
-    #[test]
-    fn wire_thinking_includes_clear_thinking_when_set() {
-        let thinking = WireThinking {
-            r#type: "enabled".to_string(),
-            clear_thinking: Some(false),
-        };
-        let json = serde_json::to_value(&thinking).unwrap();
-        assert_eq!(
-            json,
-            serde_json::json!({"type": "enabled", "clear_thinking": false})
-        );
     }
 
     #[test]

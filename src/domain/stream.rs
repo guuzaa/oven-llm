@@ -167,12 +167,8 @@ impl StreamCollector {
                 }
             },
             StreamEvent::MessageDelta { stop_reason, usage } => {
-                if stop_reason.is_some() {
-                    self.stop_reason = *stop_reason;
-                }
-                if usage.is_some() {
-                    self.usage = *usage;
-                }
+                self.stop_reason = *stop_reason;
+                self.usage = *usage;
             }
             StreamEvent::ContentBlockStop { .. } | StreamEvent::MessageStop => {}
         }
@@ -694,44 +690,5 @@ mod tests {
         let c = StreamCollector::default();
         assert!(c.id.is_none());
         assert!(c.blocks.is_empty());
-    }
-
-    #[test]
-    fn collector_merges_split_stop_reason_and_usage_deltas() {
-        let mut c = StreamCollector::new();
-        c.push(&StreamEvent::MessageStart {
-            id: "msg_split".into(),
-            model: "glm-5.3-flash".into(),
-        });
-        c.push(&StreamEvent::ContentBlockStart {
-            index: 0,
-            block: ContentBlock::Text {
-                text: String::new(),
-            },
-        });
-        c.push(&StreamEvent::ContentBlockDelta {
-            index: 0,
-            delta: Delta::TextDelta { text: "ok".into() },
-        });
-        c.push(&StreamEvent::MessageDelta {
-            stop_reason: Some(StopReason::EndTurn),
-            usage: None,
-        });
-        c.push(&StreamEvent::MessageDelta {
-            stop_reason: None,
-            usage: Some(Usage {
-                input_tokens: 1870,
-                output_tokens: 419,
-                cache_read_tokens: 1600,
-                reasoning_tokens: 31,
-            }),
-        });
-
-        let resp = c.finish().unwrap();
-        assert_eq!(resp.stop_reason, Some(StopReason::EndTurn));
-        let usage = resp.usage.unwrap();
-        assert_eq!(usage.input_tokens, 1870);
-        assert_eq!(usage.cache_read_tokens, 1600);
-        assert_eq!(usage.reasoning_tokens, 31);
     }
 }

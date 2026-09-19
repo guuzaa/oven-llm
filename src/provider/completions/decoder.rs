@@ -121,6 +121,10 @@ pub(crate) fn decode_response(
 /// 将一个响应侧的 `WireResponseToolCall` 解码为 `ContentBlock::ToolUse`，
 /// 解析 `arguments` JSON 字符串失败时返回
 /// `DecodeError::InvalidToolArguments`。
+///
+/// wire 上的 `arguments` 原文会逐字节存进 `raw_arguments`：重放该 assistant
+/// 消息时 encoder 原样回传，provider 的隐式上下文缓存（按完整匹配缓存单元
+/// 判定）才能命中模型输出边界的单元。
 fn decode_tool_call(
     tool_call: WireResponseToolCall,
 ) -> Result<ContentBlock, CompletionsDecodeError> {
@@ -136,6 +140,7 @@ fn decode_tool_call(
         id: tool_call.id,
         name: tool_call.function.name,
         input,
+        raw_arguments: Some(tool_call.function.arguments),
     })
 }
 
@@ -409,6 +414,7 @@ impl StreamDecoder {
                 id: id.unwrap_or_default().to_string(),
                 name: name.unwrap_or_default().to_string(),
                 input: serde_json::Value::String(String::new()),
+                raw_arguments: None,
             },
         });
         index
@@ -805,7 +811,9 @@ mod tests {
         let response = decode_response(wire).unwrap();
         assert_eq!(response.content.len(), 1);
         match &response.content[0] {
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "get_weather");
                 assert_eq!(input, &serde_json::json!({"city": "Beijing"}));
@@ -813,6 +821,33 @@ mod tests {
             other => panic!("expected ToolUse block, got {other:?}"),
         }
         assert_eq!(response.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    /// 非流式响应里的 `arguments` 原文同样要逐字节留下，供重放时回传。
+    #[test]
+    fn decode_response_keeps_raw_tool_arguments() {
+        let raw = r#"{"city": "Beijing", "unit": "c"}"#;
+        let message = WireResponseMessage {
+            role: "assistant".to_string(),
+            content: None,
+            tool_calls: Some(vec![WireResponseToolCall {
+                id: "call_1".to_string(),
+                kind: "function".to_string(),
+                function: WireResponseToolCallFunction {
+                    name: "get_weather".to_string(),
+                    arguments: raw.to_string(),
+                },
+            }]),
+            ..Default::default()
+        };
+        let wire = wire_response(vec![choice(message, Some("tool_calls"))], None);
+        let response = decode_response(wire).unwrap();
+        match &response.content[0] {
+            ContentBlock::ToolUse { raw_arguments, .. } => {
+                assert_eq!(raw_arguments.as_deref(), Some(raw));
+            }
+            other => panic!("expected ToolUse block, got {other:?}"),
+        }
     }
 
     #[test]

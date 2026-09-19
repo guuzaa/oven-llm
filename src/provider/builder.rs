@@ -140,6 +140,7 @@ impl ProviderBuilder {
     ///
     /// - 未设 `kind` → 使用厂商预设的默认协议
     /// - 提供 `base_url` 时仍保留该厂商的静态目录，再叠加用户追加的模型
+    /// - 用户追加的模型与预设目录同 wire id 时，用户提供的元数据覆盖预设
     /// - 缺失 `provider_name` / `api_key` → `InvalidProviderConfig`
     /// - 不支持的组合 → `UnsupportedProvider`
     pub fn build(self) -> Result<Box<dyn Provider>, ProviderError> {
@@ -323,6 +324,27 @@ mod tests {
         assert!(
             models.iter().any(|m| m.id == "custom-extra"),
             "added model should be present"
+        );
+    }
+
+    #[test]
+    fn added_model_with_same_id_overrides_preset_catalog() {
+        let mut override_model = ModelInfo::minimal("deepseek-v4-flash", ProviderName::DeepSeek);
+        override_model.context_window = 42_000;
+
+        let provider = ProviderBuilder::completions()
+            .provider_name(ProviderName::DeepSeek)
+            .api_key("k")
+            .add_model(override_model)
+            .build()
+            .unwrap();
+
+        let resolved = provider
+            .resolve_model(&crate::ModelId::from("deepseek-v4-flash"))
+            .expect("model should resolve");
+        assert_eq!(
+            resolved.context_window, 42_000,
+            "user-provided model metadata should override the preset catalog entry"
         );
     }
 

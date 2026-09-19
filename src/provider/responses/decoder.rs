@@ -141,6 +141,9 @@ pub(crate) fn decode_response(wire: ResponseObject) -> Result<Response, DecodeEr
                     id: call_id,
                     name,
                     input,
+                    // 原样保留 wire 上的 `arguments` 文本，供重放时逐字节回传
+                    // （provider 隐式上下文缓存要求完整匹配缓存单元）。
+                    raw_arguments: Some(arguments),
                 });
                 saw_function_call = true;
             }
@@ -426,6 +429,7 @@ impl StreamDecoder {
             id: id.unwrap_or_default().to_string(),
             name: name.unwrap_or_default().to_string(),
             input: serde_json::Value::String(String::new()),
+            raw_arguments: None,
         };
         self.ensure_block(output_index, block, events)
     }
@@ -604,7 +608,9 @@ mod tests {
         let response = decode_response(wire).unwrap();
         assert_eq!(response.content.len(), 1);
         match &response.content[0] {
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "get_weather");
                 assert_eq!(input, &serde_json::json!({"city": "Hangzhou"}));
@@ -612,6 +618,31 @@ mod tests {
             other => panic!("expected ToolUse block, got {other:?}"),
         }
         assert_eq!(response.stop_reason, Some(StopReason::ToolUse));
+    }
+
+    /// 非流式 `function_call` 的 `arguments` 原文同样要逐字节留下。
+    #[test]
+    fn decode_response_keeps_raw_function_call_arguments() {
+        let raw = r#"{ "city": "Hangzhou" }"#;
+        let wire = wire_response(
+            "completed",
+            serde_json::json!([{
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+                "name": "get_weather",
+                "arguments": raw
+            }]),
+            None,
+            None,
+        );
+        let response = decode_response(wire).unwrap();
+        match &response.content[0] {
+            ContentBlock::ToolUse { raw_arguments, .. } => {
+                assert_eq!(raw_arguments.as_deref(), Some(raw));
+            }
+            other => panic!("expected ToolUse block, got {other:?}"),
+        }
     }
 
     #[test]
@@ -829,7 +860,9 @@ mod tests {
             ContentBlock::Text { text } if text == "I'll check the weather in Hangzhou, Zhejiang for you."
         ));
         match &response.content[1] {
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "call_00_C3qv97zqcLotY0gqaJxB7908");
                 assert_eq!(name, "get_weather");
                 assert_eq!(input, &serde_json::json!({}));
@@ -874,7 +907,9 @@ mod tests {
             ContentBlock::Thinking { thinking } if thinking == "The question is: \"What is the temperature in San Francisco?\"\n"
         ));
         match &response.content[1] {
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "call-b9f824e6-aba8-4c03-865d-e9c485976c0f-0");
                 assert_eq!(name, "get_temperature");
                 assert_eq!(input, &serde_json::json!({"location": "San Francisco"}));

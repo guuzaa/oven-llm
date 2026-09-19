@@ -156,7 +156,10 @@ async fn run_tool_loop<P: Provider + ?Sized>(provider: &P) {
         }
 
         for block in response.tool_uses() {
-            let ContentBlock::ToolUse { id, name, input } = block else {
+            let ContentBlock::ToolUse {
+                id, name, input, ..
+            } = block
+            else {
                 continue;
             };
             println!("  tool call: {name}({input})");

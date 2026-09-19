@@ -260,12 +260,18 @@ fn encode_assistant_message(
         match block {
             ContentBlock::Thinking { .. } => { /* 不回传思维内容 */ }
             ContentBlock::Text { text } => text_parts.push(text.clone()),
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                raw_arguments,
+            } => {
                 flush_assistant_text(&mut text_parts, out);
                 out.push(ResponseInputItem::FunctionCall {
                     call_id: id.clone(),
                     name: name.clone(),
-                    arguments: input.to_string(),
+                    // 优先原样回传 wire 原始文本，见 [`ContentBlock::tool_arguments`]。
+                    arguments: ContentBlock::tool_arguments(input, raw_arguments.as_deref()),
                 });
             }
             other => {
@@ -394,6 +400,28 @@ mod tests {
 
     // --- 多轮：assistant 文本 + ToolUse、ToolResult ---
 
+    /// 重放 `function_call` 时同样原样回传 wire 原始 `arguments`，否则
+    /// provider 的模型输出边界缓存单元失配。
+    #[test]
+    fn encode_replays_raw_function_call_arguments() {
+        let raw = r#"{ "city": "Hangzhou" }"#;
+        let req = Request {
+            messages: vec![Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "get_weather".to_string(),
+                input: serde_json::from_str(raw).unwrap(),
+                raw_arguments: Some(raw.to_string()),
+            }])],
+            ..Default::default()
+        };
+        let wire = encode_request(&req, false).unwrap();
+        let input = wire.input.unwrap();
+        match &input[0] {
+            ResponseInputItem::FunctionCall { arguments, .. } => assert_eq!(arguments, raw),
+            other => panic!("expected FunctionCall, got {other:?}"),
+        }
+    }
+
     #[test]
     fn multi_turn_encodes_items_in_order() {
         let req = Request {
@@ -402,11 +430,11 @@ mod tests {
                 Message::assistant(vec![
                     ContentBlock::thinking("let me check"),
                     ContentBlock::text("I'll check."),
-                    ContentBlock::ToolUse {
-                        id: "call_1".to_string(),
-                        name: "get_weather".to_string(),
-                        input: serde_json::json!({"city": "Hangzhou"}),
-                    },
+                    ContentBlock::tool_use(
+                        "call_1".to_string(),
+                        "get_weather".to_string(),
+                        serde_json::json!({"city": "Hangzhou"}),
+                    ),
                 ]),
                 Message::tool_result("call_1", "sunny", false),
             ],
@@ -510,11 +538,11 @@ mod tests {
     fn system_message_with_non_text_block_errors() {
         let message = Message {
             role: Role::System,
-            content: vec![ContentBlock::ToolUse {
-                id: "id1".to_string(),
-                name: "f".to_string(),
-                input: serde_json::json!({}),
-            }],
+            content: vec![ContentBlock::tool_use(
+                "id1".to_string(),
+                "f".to_string(),
+                serde_json::json!({}),
+            )],
         };
         let err = encode_system_message(&message).unwrap_err();
         assert!(matches!(err, EncodeError::InvalidContent(_)));
@@ -626,11 +654,11 @@ mod tests {
     fn tool_result_non_text_block_is_json_serialized() {
         let message = Message::tool(vec![ContentBlock::ToolResult {
             tool_use_id: "call_1".to_string(),
-            content: vec![ContentBlock::ToolUse {
-                id: "inner".to_string(),
-                name: "nested".to_string(),
-                input: serde_json::json!({"a": 1}),
-            }],
+            content: vec![ContentBlock::tool_use(
+                "inner".to_string(),
+                "nested".to_string(),
+                serde_json::json!({"a": 1}),
+            )],
             is_error: false,
         }]);
         let mut out = Vec::new();
@@ -647,11 +675,11 @@ mod tests {
 
     #[test]
     fn user_message_with_tool_use_errors() {
-        let message = Message::user(vec![ContentBlock::ToolUse {
-            id: "id1".to_string(),
-            name: "f".to_string(),
-            input: serde_json::json!({}),
-        }]);
+        let message = Message::user(vec![ContentBlock::tool_use(
+            "id1".to_string(),
+            "f".to_string(),
+            serde_json::json!({}),
+        )]);
         let mut out = Vec::new();
         let err = encode_user_message(&message, &mut out).unwrap_err();
         assert!(matches!(err, EncodeError::InvalidContent(_)));

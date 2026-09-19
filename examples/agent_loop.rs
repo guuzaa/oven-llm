@@ -62,7 +62,10 @@ async fn main() -> ExampleResult<()> {
         }
 
         for block in response.tool_uses() {
-            let ContentBlock::ToolUse { id, name, input } = block else {
+            let ContentBlock::ToolUse {
+                id, name, input, ..
+            } = block
+            else {
                 continue;
             };
             println!("tool: {name}({input})");

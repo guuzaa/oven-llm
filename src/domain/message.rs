@@ -33,6 +33,20 @@ pub enum ContentBlock {
         id: String,
         name: String,
         input: serde_json::Value,
+        /// wire 上原样收到的 `arguments` JSON 文本，逐字节保留。
+        ///
+        /// provider 的隐式上下文缓存按「完整匹配一个缓存前缀单元」判定命中，
+        /// 其中「模型输出结束位置」的单元就是模型当时生成的那串 token。重放
+        /// assistant 消息时若重新序列化 `input`（紧凑分隔符、key 按字典序），
+        /// 文本与生成时不一致，该单元便永远无法完整匹配，整轮（思维链 + 正文 +
+        /// 工具调用）都会掉出缓存。所以 decoder 与 `StreamCollector` 把原始文本
+        /// 存放在这里，encoder 重放时优先原样回传。
+        ///
+        /// `None` 表示这条内容块不是从 wire 解析出来的（手工构造），encoder 会
+        /// 退回 `input` 的紧凑序列化。若调用方改写了 `input`，必须同时更新或清空
+        /// 本字段，否则重放出去的仍是旧参数。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_arguments: Option<String>,
     },
     ToolResult {
         tool_use_id: String,
@@ -53,6 +67,34 @@ impl ContentBlock {
     /// 便捷构造一个 `ContentBlock::Text` 内容块。
     pub fn text(text: impl Into<String>) -> ContentBlock {
         ContentBlock::Text { text: text.into() }
+    }
+
+    /// 便捷构造一个不带 wire 原始 `arguments` 的 `ContentBlock::ToolUse`
+    /// （`raw_arguments` 为 `None`，encoder 会用 `input` 的紧凑序列化重放）。
+    pub fn tool_use(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        input: serde_json::Value,
+    ) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+            raw_arguments: None,
+        }
+    }
+
+    /// 重放 `ToolUse` 时 wire 上应该发出的 `arguments` 文本。
+    ///
+    /// 优先逐字节回传 `raw_arguments`（decoder / `StreamCollector` 从 wire 上
+    /// 原样收下的那串文本，等同于模型当时生成的 JSON）；只有没有原始文本时才
+    /// 退回 `input` 的紧凑序列化。重新序列化会去掉 `": "` 的空格并按字典序重排
+    /// key，使 provider 的缓存单元失配，因此重放路径必须保持字节一致。
+    pub fn tool_arguments(input: &serde_json::Value, raw_arguments: Option<&str>) -> String {
+        match raw_arguments {
+            Some(raw) => raw.to_owned(),
+            None => input.to_string(),
+        }
     }
 }
 
@@ -229,12 +271,93 @@ mod tests {
             id: "tool_1".to_string(),
             name: "get_weather".to_string(),
             input: serde_json::json!({ "city": "Beijing" }),
+            raw_arguments: None,
         };
         let json = serde_json::to_value(&block).unwrap();
         assert_eq!(json["type"], "tool_use");
         assert_eq!(json["id"], "tool_1");
         assert_eq!(json["name"], "get_weather");
         assert_eq!(json["input"], serde_json::json!({ "city": "Beijing" }));
+    }
+
+    #[test]
+    fn tool_use_constructor_leaves_raw_arguments_empty() {
+        let block = ContentBlock::tool_use("t1", "read_file", serde_json::json!({ "path": "a" }));
+        match block {
+            ContentBlock::ToolUse {
+                id, raw_arguments, ..
+            } => {
+                assert_eq!(id, "t1");
+                assert_eq!(raw_arguments, None);
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    /// 重放必须优先原样回传 wire 上的原始文本，否则模型输出边界的缓存单元失配。
+    #[test]
+    fn tool_arguments_prefers_raw_wire_text() {
+        let input = serde_json::json!({ "path": "src/main.rs", "limit": 10 });
+        let raw = r#"{"path": "src/main.rs", "limit": 10}"#;
+        assert_eq!(
+            ContentBlock::tool_arguments(&input, Some(raw)),
+            raw,
+            "raw text must be replayed byte for byte"
+        );
+        // 没有原始文本时退回紧凑序列化：空格被去掉、key 按字典序重排。
+        assert_eq!(
+            ContentBlock::tool_arguments(&input, None),
+            r#"{"limit":10,"path":"src/main.rs"}"#
+        );
+    }
+
+    #[test]
+    fn tool_use_serializes_raw_arguments_only_when_present() {
+        let block = ContentBlock::ToolUse {
+            id: "t1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "a" }),
+            raw_arguments: Some(r#"{ "path": "a" }"#.to_string()),
+        };
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["raw_arguments"], r#"{ "path": "a" }"#);
+
+        let without = ContentBlock::tool_use("t1", "read_file", serde_json::json!({ "path": "a" }));
+        let json = serde_json::to_value(&without).unwrap();
+        assert!(json.get("raw_arguments").is_none());
+    }
+
+    /// 0.4.2 之前的会话记录里没有 `raw_arguments`，必须仍然能反序列化。
+    #[test]
+    fn tool_use_deserializes_without_raw_arguments() {
+        let json = serde_json::json!({
+            "type": "tool_use",
+            "id": "t1",
+            "name": "read_file",
+            "input": { "path": "a" }
+        });
+        let block: ContentBlock = serde_json::from_value(json).unwrap();
+        match block {
+            ContentBlock::ToolUse { raw_arguments, .. } => assert_eq!(raw_arguments, None),
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_use_round_trips_raw_arguments_through_serde() {
+        let block = ContentBlock::ToolUse {
+            id: "t1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "a" }),
+            raw_arguments: Some(r#"{ "path": "a" }"#.to_string()),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        match serde_json::from_str::<ContentBlock>(&json).unwrap() {
+            ContentBlock::ToolUse { raw_arguments, .. } => {
+                assert_eq!(raw_arguments.as_deref(), Some(r#"{ "path": "a" }"#));
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
     }
 
     #[test]

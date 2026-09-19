@@ -267,6 +267,10 @@ fn encode_tool_message(
 /// `Thinking` 块为 `reasoning_content`（交错式思考需要回传思考内容以保证
 /// 多轮上下文一致），将 `ToolUse` 块转换为 `tool_calls`；其余内容块
 /// （`Image`、`ToolResult`）返回 `EncodeError::InvalidContent`。
+///
+/// `tool_calls[].function.arguments` 优先原样回传内容块里的 wire 原始文本
+/// （见 [`ContentBlock::tool_arguments`]）：provider 的隐式上下文缓存按「完整
+/// 匹配缓存单元」判定，重新序列化会让模型输出边界的单元失配。
 fn encode_assistant_message(message: &Message) -> Result<WireMessage, CompletionsEncodeError> {
     let mut text = String::new();
     let mut reasoning = String::new();
@@ -276,13 +280,18 @@ fn encode_assistant_message(message: &Message) -> Result<WireMessage, Completion
         match block {
             ContentBlock::Thinking { thinking } => reasoning.push_str(thinking),
             ContentBlock::Text { text: t } => text.push_str(t),
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id,
+                name,
+                input,
+                raw_arguments,
+            } => {
                 tool_calls.push(WireToolCall {
                     id: id.clone(),
                     kind: "function".to_string(),
                     function: WireToolCallFunction {
                         name: name.clone(),
-                        arguments: input.to_string(),
+                        arguments: ContentBlock::tool_arguments(input, raw_arguments.as_deref()),
                     },
                 });
             }
@@ -375,11 +384,11 @@ mod tests {
     fn system_message_with_non_text_block_errors() {
         let message = Message {
             role: Role::System,
-            content: vec![ContentBlock::ToolUse {
-                id: "id1".to_string(),
-                name: "f".to_string(),
-                input: serde_json::json!({}),
-            }],
+            content: vec![ContentBlock::tool_use(
+                "id1".to_string(),
+                "f".to_string(),
+                serde_json::json!({}),
+            )],
         };
         let err = encode_system_message(&message).unwrap_err();
         assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
@@ -511,11 +520,11 @@ mod tests {
     fn tool_result_with_non_text_content_errors() {
         let message = Message::user(vec![ContentBlock::ToolResult {
             tool_use_id: "call_1".to_string(),
-            content: vec![ContentBlock::ToolUse {
-                id: "id1".to_string(),
-                name: "f".to_string(),
-                input: serde_json::json!({}),
-            }],
+            content: vec![ContentBlock::tool_use(
+                "id1".to_string(),
+                "f".to_string(),
+                serde_json::json!({}),
+            )],
             is_error: false,
         }]);
         let mut out = Vec::new();
@@ -528,11 +537,11 @@ mod tests {
 
     #[test]
     fn tool_use_in_user_message_errors() {
-        let message = Message::user(vec![ContentBlock::ToolUse {
-            id: "id1".to_string(),
-            name: "f".to_string(),
-            input: serde_json::json!({}),
-        }]);
+        let message = Message::user(vec![ContentBlock::tool_use(
+            "id1".to_string(),
+            "f".to_string(),
+            serde_json::json!({}),
+        )]);
         let mut out = Vec::new();
         let err = encode_user_message(&message, &mut out).unwrap_err();
         assert!(matches!(err, CompletionsEncodeError::InvalidContent(_)));
@@ -592,18 +601,50 @@ mod tests {
     }
 
     #[test]
+    fn assistant_replays_raw_tool_arguments_byte_for_byte() {
+        // deepseek 生成 `{"path": "src/main.rs", "limit": 10}`：冒号后有空格、
+        // key 是 schema 顺序。重放必须原样回传，重新序列化会让 provider 的
+        // 「模型输出结束位置」缓存单元失配。
+        let raw = r#"{"path": "src/main.rs", "limit": 10}"#;
+        let message = Message::assistant(vec![ContentBlock::ToolUse {
+            id: "call_1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::from_str(raw).unwrap(),
+            raw_arguments: Some(raw.to_string()),
+        }]);
+        let wire = encode_assistant_message(&message).unwrap();
+        let tool_calls = wire.tool_calls.unwrap();
+        assert_eq!(tool_calls[0].function.arguments, raw);
+    }
+
+    #[test]
+    fn assistant_without_raw_arguments_falls_back_to_compact_json() {
+        let message = Message::assistant(vec![ContentBlock::tool_use(
+            "call_1",
+            "read_file",
+            serde_json::json!({"path": "src/main.rs", "limit": 10}),
+        )]);
+        let wire = encode_assistant_message(&message).unwrap();
+        let tool_calls = wire.tool_calls.unwrap();
+        assert_eq!(
+            tool_calls[0].function.arguments,
+            r#"{"limit":10,"path":"src/main.rs"}"#
+        );
+    }
+
+    #[test]
     fn assistant_tool_use_converts_to_tool_calls() {
         let message = Message::assistant(vec![
-            ContentBlock::ToolUse {
-                id: "call_1".to_string(),
-                name: "get_weather".to_string(),
-                input: serde_json::json!({"city": "Beijing"}),
-            },
-            ContentBlock::ToolUse {
-                id: "call_2".to_string(),
-                name: "get_time".to_string(),
-                input: serde_json::json!({}),
-            },
+            ContentBlock::tool_use(
+                "call_1".to_string(),
+                "get_weather".to_string(),
+                serde_json::json!({"city": "Beijing"}),
+            ),
+            ContentBlock::tool_use(
+                "call_2".to_string(),
+                "get_time".to_string(),
+                serde_json::json!({}),
+            ),
         ]);
         let wire = encode_assistant_message(&message).unwrap();
         assert_eq!(wire.content, None);

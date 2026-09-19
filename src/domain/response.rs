@@ -405,11 +405,7 @@ mod tests {
             ContentBlock::text("Hello"),
             ContentBlock::text(" "),
             ContentBlock::text("world"),
-            ContentBlock::ToolUse {
-                id: "t1".into(),
-                name: "f".into(),
-                input: serde_json::json!({}),
-            },
+            ContentBlock::tool_use("t1", "f", serde_json::json!({})),
         ]);
         assert_eq!(response.text(), "Hello world");
     }
@@ -426,11 +422,7 @@ mod tests {
             ContentBlock::thinking("let me "),
             ContentBlock::text("ignore"),
             ContentBlock::thinking("think"),
-            ContentBlock::ToolUse {
-                id: "t1".into(),
-                name: "f".into(),
-                input: serde_json::json!({}),
-            },
+            ContentBlock::tool_use("t1", "f", serde_json::json!({})),
         ]);
         assert_eq!(response.thinking(), "let me think");
     }
@@ -445,17 +437,9 @@ mod tests {
     fn response_tool_uses_iterates_only_tool_use_blocks() {
         let response = sample_response(vec![
             ContentBlock::text("hi"),
-            ContentBlock::ToolUse {
-                id: "t1".into(),
-                name: "a".into(),
-                input: serde_json::json!({"x": 1}),
-            },
+            ContentBlock::tool_use("t1", "a", serde_json::json!({"x": 1})),
             ContentBlock::thinking("..."),
-            ContentBlock::ToolUse {
-                id: "t2".into(),
-                name: "b".into(),
-                input: serde_json::json!({"y": 2}),
-            },
+            ContentBlock::tool_use("t2", "b", serde_json::json!({"y": 2})),
         ]);
         let uses: Vec<_> = response.tool_uses().collect();
         assert_eq!(uses.len(), 2);
@@ -477,11 +461,11 @@ mod tests {
 
     #[test]
     fn response_has_tool_use() {
-        let with = sample_response(vec![ContentBlock::ToolUse {
-            id: "t1".into(),
-            name: "f".into(),
-            input: serde_json::json!({}),
-        }]);
+        let with = sample_response(vec![ContentBlock::tool_use(
+            "t1",
+            "f",
+            serde_json::json!({}),
+        )]);
         let without = sample_response(vec![ContentBlock::text("hi")]);
         assert!(with.has_tool_use());
         assert!(!without.has_tool_use());

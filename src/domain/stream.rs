@@ -124,10 +124,21 @@ impl StreamCollector {
                 self.model = Some(model.clone());
             }
             StreamEvent::ContentBlockStart { index, block } => {
-                if let ContentBlock::ToolUse { input, .. } = block {
-                    let initial_arguments = match input {
-                        serde_json::Value::String(arguments) => arguments.clone(),
-                        arguments => arguments.to_string(),
+                if let ContentBlock::ToolUse {
+                    input,
+                    raw_arguments,
+                    ..
+                } = block
+                {
+                    // 起始块可能已经带着 wire 原始文本（有的 provider 一次给全
+                    // 参数），否则退回占位 `input`：流式阶段它只是一个空串或已到
+                    // 达的参数片段，`InputJsonDelta` 会继续往后拼。
+                    let initial_arguments = match raw_arguments {
+                        Some(raw) => raw.clone(),
+                        None => match input {
+                            serde_json::Value::String(arguments) => arguments.clone(),
+                            arguments => arguments.to_string(),
+                        },
                     };
                     self.tool_arguments.insert(*index, initial_arguments);
                 }
@@ -179,21 +190,31 @@ impl StreamCollector {
         let mut blocks = self.blocks;
 
         for (index, raw_arguments) in self.tool_arguments {
-            let input = if raw_arguments.trim().is_empty() {
-                json!({})
+            // 空串（模型没有吐出任何参数）没有可回传的原始文本：`input` 用 `{}`，
+            // 由 encoder 退回紧凑序列化。其余情况把原始文本逐字节存进内容块，
+            // 让重放路径与模型当时生成的 token 完全一致。
+            let (input, raw) = if raw_arguments.trim().is_empty() {
+                (json!({}), None)
             } else {
-                serde_json::from_str(&raw_arguments).map_err(|error| {
+                let input = serde_json::from_str(&raw_arguments).map_err(|error| {
                     StreamCollectorError::Stream(format!(
                         "invalid JSON arguments for tool block {index}: {error}"
                     ))
-                })?
+                })?;
+                (input, Some(raw_arguments))
             };
-            let Some(ContentBlock::ToolUse { input: target, .. }) = blocks.get_mut(&index) else {
+            let Some(ContentBlock::ToolUse {
+                input: target,
+                raw_arguments: target_raw,
+                ..
+            }) = blocks.get_mut(&index)
+            else {
                 return Err(StreamCollectorError::Stream(format!(
                     "tool arguments collected for non-tool block {index}"
                 )));
             };
             *target = input;
+            *target_raw = raw;
         }
 
         Ok(Response {
@@ -469,11 +490,11 @@ mod tests {
         });
         c.push(&StreamEvent::ContentBlockStart {
             index: 0,
-            block: ContentBlock::ToolUse {
-                id: "tool_1".into(),
-                name: "read_file".into(),
-                input: serde_json::Value::String(String::new()),
-            },
+            block: ContentBlock::tool_use(
+                "tool_1",
+                "read_file",
+                serde_json::Value::String(String::new()),
+            ),
         });
         c.push(&StreamEvent::ContentBlockDelta {
             index: 0,
@@ -496,12 +517,138 @@ mod tests {
         assert_eq!(resp.stop_reason, Some(StopReason::ToolUse));
         assert_eq!(resp.content.len(), 1);
         match &resp.content[0] {
-            ContentBlock::ToolUse { id, name, input } => {
+            ContentBlock::ToolUse {
+                id, name, input, ..
+            } => {
                 assert_eq!(id, "tool_1");
                 assert_eq!(name, "read_file");
                 assert_eq!(input["path"], "src/main.rs");
             }
             _ => panic!("expected ToolUse block"),
+        }
+    }
+
+    /// deepseek 生成的是 `{"location": "Hangzhou"}`（冒号后有空格）。重放必须
+    /// 逐字节保留这段文本：provider 的隐式缓存按「完整匹配缓存单元」判定，重新
+    /// 序列化会让「模型输出结束位置」的单元永远失配。
+    #[test]
+    fn collector_preserves_raw_tool_arguments_byte_for_byte() {
+        let raw = r#"{"location": "Hangzhou, Zhejiang"}"#;
+        let mut c = StreamCollector::new();
+        c.push(&StreamEvent::MessageStart {
+            id: "msg_raw".into(),
+            model: "deepseek-flash".into(),
+        });
+        c.push(&StreamEvent::ContentBlockStart {
+            index: 0,
+            block: ContentBlock::tool_use(
+                "call_1",
+                "probe",
+                serde_json::Value::String(String::new()),
+            ),
+        });
+        // 与真实 SSE 一致：参数是分片到达的。
+        let fragments = [
+            "{",
+            r#""location""#,
+            r#": "#,
+            r#""Hang"#,
+            "zhou",
+            r#", Zhejiang""#,
+            "}",
+        ];
+        assert_eq!(fragments.concat(), raw);
+        for fragment in fragments {
+            c.push(&StreamEvent::ContentBlockDelta {
+                index: 0,
+                delta: Delta::InputJsonDelta {
+                    partial_json: fragment.into(),
+                },
+            });
+        }
+        c.push(&StreamEvent::MessageDelta {
+            stop_reason: Some(StopReason::ToolUse),
+            usage: None,
+        });
+
+        let resp = c.finish().unwrap();
+        match &resp.content[0] {
+            ContentBlock::ToolUse {
+                input,
+                raw_arguments,
+                ..
+            } => {
+                assert_eq!(raw_arguments.as_deref(), Some(raw));
+                assert_eq!(input["location"], "Hangzhou, Zhejiang");
+            }
+            other => panic!("expected ToolUse block, got {other:?}"),
+        }
+    }
+
+    /// 起始块已经带着 wire 原始文本时，以它为准（部分 provider 一次给全参数）。
+    #[test]
+    fn collector_prefers_raw_arguments_from_block_start() {
+        let raw = r#"{ "path": "a.rs" }"#;
+        let mut c = StreamCollector::new();
+        c.push(&StreamEvent::MessageStart {
+            id: "msg_start_raw".into(),
+            model: "gpt-4".into(),
+        });
+        c.push(&StreamEvent::ContentBlockStart {
+            index: 0,
+            block: ContentBlock::ToolUse {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({ "path": "a.rs" }),
+                raw_arguments: Some(raw.into()),
+            },
+        });
+        c.push(&StreamEvent::MessageDelta {
+            stop_reason: Some(StopReason::ToolUse),
+            usage: None,
+        });
+
+        let resp = c.finish().unwrap();
+        match &resp.content[0] {
+            ContentBlock::ToolUse { raw_arguments, .. } => {
+                assert_eq!(raw_arguments.as_deref(), Some(raw));
+            }
+            other => panic!("expected ToolUse block, got {other:?}"),
+        }
+    }
+
+    /// 模型一个参数都没吐时没有可回传的原文，交给 encoder 紧凑序列化 `{}`。
+    #[test]
+    fn collector_empty_arguments_leave_no_raw_text() {
+        let mut c = StreamCollector::new();
+        c.push(&StreamEvent::MessageStart {
+            id: "msg_empty_args".into(),
+            model: "gpt-4".into(),
+        });
+        c.push(&StreamEvent::ContentBlockStart {
+            index: 0,
+            block: ContentBlock::tool_use(
+                "call_1",
+                "noop",
+                serde_json::Value::String(String::new()),
+            ),
+        });
+        c.push(&StreamEvent::MessageDelta {
+            stop_reason: Some(StopReason::ToolUse),
+            usage: None,
+        });
+
+        let resp = c.finish().unwrap();
+        match &resp.content[0] {
+            ContentBlock::ToolUse {
+                input,
+                raw_arguments,
+                ..
+            } => {
+                assert_eq!(raw_arguments, &None);
+                assert_eq!(input, &serde_json::json!({}));
+            }
+            other => panic!("expected ToolUse block, got {other:?}"),
         }
     }
 
@@ -521,11 +668,11 @@ mod tests {
         });
         c.push(&StreamEvent::ContentBlockStart {
             index: 0,
-            block: ContentBlock::ToolUse {
-                id: "tool_1".into(),
-                name: "test".into(),
-                input: serde_json::Value::String(String::new()),
-            },
+            block: ContentBlock::tool_use(
+                "tool_1",
+                "test",
+                serde_json::Value::String(String::new()),
+            ),
         });
         c.push(&StreamEvent::ContentBlockDelta {
             index: 0,
